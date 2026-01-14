@@ -19,6 +19,7 @@ from ethereum.utils.numeric import ceil32
 
 from ...fork_types import EMPTY_ACCOUNT
 from ...state import get_account
+from ...state_access_log import log_account_read, log_code_read
 from ...utils.address import to_address_masked
 from ...vm.memory import buffer_read, memory_write
 from .. import Evm
@@ -84,9 +85,19 @@ def balance(evm: Evm) -> None:
 
     # OPERATION
     # Non-existent accounts default to EMPTY_ACCOUNT, which has balance 0.
-    balance = get_account(evm.message.block_env.state, address).balance
+    account = get_account(evm.message.block_env.state, address)
 
-    push(evm.stack, balance)
+    # ACCESS LOG
+    if evm.access_log is not None:
+        log_account_read(
+            evm.access_log,
+            address,
+            account.balance,
+            account.nonce,
+            account.code,
+        )
+
+    push(evm.stack, account.balance)
 
     # PROGRAM COUNTER
     evm.pc += Uint(1)
@@ -350,9 +361,13 @@ def extcodesize(evm: Evm) -> None:
     charge_gas(evm, access_gas_cost)
 
     # OPERATION
-    code = get_account(evm.message.block_env.state, address).code
+    account = get_account(evm.message.block_env.state, address)
 
-    codesize = U256(len(code))
+    # ACCESS LOG
+    if evm.access_log is not None:
+        log_code_read(evm.access_log, address, account.code)
+
+    codesize = U256(len(account.code))
     push(evm.stack, codesize)
 
     # PROGRAM COUNTER
@@ -393,6 +408,10 @@ def extcodecopy(evm: Evm) -> None:
     # OPERATION
     evm.memory += b"\x00" * extend_memory.expand_by
     code = get_account(evm.message.block_env.state, address).code
+
+    # ACCESS LOG
+    if evm.access_log is not None:
+        log_code_read(evm.access_log, address, code)
 
     value = buffer_read(code, code_start_index, size)
     memory_write(evm.memory, memory_start_index, value)
@@ -483,6 +502,10 @@ def extcodehash(evm: Evm) -> None:
 
     # OPERATION
     account = get_account(evm.message.block_env.state, address)
+
+    # ACCESS LOG
+    if evm.access_log is not None:
+        log_code_read(evm.access_log, address, account.code)
 
     if account == EMPTY_ACCOUNT:
         codehash = U256(0)

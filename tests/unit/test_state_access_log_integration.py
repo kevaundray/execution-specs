@@ -2,15 +2,20 @@
 
 import pytest
 from ethereum_types.bytes import Bytes32
-from ethereum_types.numeric import U256
+from ethereum_types.numeric import U256, Uint
 
 from ethereum.forks.amsterdam.state_access_log import (
+    AccountRead,
+    CodeRead,
     StateAccessLog,
     StorageRead,
     StorageWrite,
+    log_account_read,
+    log_code_read,
     log_storage_read,
     log_storage_write,
 )
+from ethereum.crypto.hash import keccak256
 
 
 def test_sload_logs_storage_read():
@@ -42,3 +47,32 @@ def test_sstore_logs_storage_write():
     assert isinstance(op, StorageWrite)
     assert op.old_value == U256(10)
     assert op.new_value == U256(20)
+
+
+def test_balance_logs_account_read():
+    """BALANCE should log AccountRead when access_log is set."""
+    log = StateAccessLog()
+    address = bytes.fromhex("1234567890123456789012345678901234567890")
+    code = b"contract"
+
+    log_account_read(log, address, U256(1000), Uint(5), code)
+
+    op = log.operations[0]
+    assert isinstance(op, AccountRead)
+    assert op.balance == U256(1000)
+    assert op.nonce == Uint(5)
+    assert op.code_hash == keccak256(code)
+
+
+def test_extcodecopy_logs_code_read():
+    """EXTCODECOPY should log CodeRead when access_log is set."""
+    log = StateAccessLog()
+    address = bytes.fromhex("1234567890123456789012345678901234567890")
+    code = b"bytecode"
+
+    log_code_read(log, address, code)
+
+    op = log.operations[0]
+    assert isinstance(op, CodeRead)
+    assert op.code_hash == keccak256(code)
+    assert log.codes[op.code_hash] == code
