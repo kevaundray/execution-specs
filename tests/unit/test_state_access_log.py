@@ -256,3 +256,14 @@ def test_log_blockhash_read():
     assert isinstance(op, BlockHashRead)
     assert op.block_number == Uint(1000)
     assert log.headers[Uint(1000)] == block_hash
+
+
+def test_state_access_log_optional_in_block_env():
+    """BlockEnvironment can have optional access_log."""
+    # This test verifies the import works after modification
+    from ethereum.forks.amsterdam.vm import BlockEnvironment
+
+    # access_log should be an optional field
+    assert hasattr(BlockEnvironment, "__dataclass_fields__")
+    fields = BlockEnvironment.__dataclass_fields__
+    assert "access_log" in fields

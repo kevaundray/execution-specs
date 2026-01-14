@@ -24,6 +24,7 @@ from ethereum.exceptions import EthereumException
 from ..blocks import Log, Receipt, Withdrawal
 from ..fork_types import Address, Authorization, VersionedHash
 from ..state import State, TransientStorage
+from ..state_access_log import StateAccessLog
 from ..transactions import LegacyTransaction
 from ..trie import Trie
 
@@ -47,6 +48,7 @@ class BlockEnvironment:
     prev_randao: Bytes32
     excess_blob_gas: U64
     parent_beacon_block_root: Hash32
+    access_log: Optional[StateAccessLog] = None
 
 
 @dataclass
@@ -154,6 +156,8 @@ class Evm:
     error: Optional[EthereumException]
     accessed_addresses: Set[Address]
     accessed_storage_keys: Set[Tuple[Address, Bytes32]]
+    access_log: Optional[StateAccessLog] = None
+    frame_id: Optional[Uint] = None
 
 
 def incorporate_child_on_success(evm: Evm, child_evm: Evm) -> None:
