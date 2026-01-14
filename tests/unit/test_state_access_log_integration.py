@@ -6,11 +6,13 @@ from ethereum_types.numeric import U256, Uint
 
 from ethereum.forks.amsterdam.state_access_log import (
     AccountRead,
+    BlockHashRead,
     CodeRead,
     StateAccessLog,
     StorageRead,
     StorageWrite,
     log_account_read,
+    log_blockhash_read,
     log_code_read,
     log_storage_read,
     log_storage_write,
@@ -76,3 +78,16 @@ def test_extcodecopy_logs_code_read():
     assert isinstance(op, CodeRead)
     assert op.code_hash == keccak256(code)
     assert log.codes[op.code_hash] == code
+
+
+def test_blockhash_logs_header_read():
+    """BLOCKHASH should log BlockHashRead when access_log is set."""
+    log = StateAccessLog()
+    block_hash = bytes.fromhex("ab" * 32)
+
+    log_blockhash_read(log, Uint(12345), block_hash)
+
+    op = log.operations[0]
+    assert isinstance(op, BlockHashRead)
+    assert op.block_number == Uint(12345)
+    assert log.headers[Uint(12345)] == block_hash
