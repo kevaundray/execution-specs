@@ -91,3 +91,52 @@ def test_blockhash_logs_header_read():
     assert isinstance(op, BlockHashRead)
     assert op.block_number == Uint(12345)
     assert log.headers[Uint(12345)] == block_hash
+
+
+from ethereum.forks.amsterdam.state_access_log import (
+    FrameStart,
+    FrameEnd,
+    start_frame,
+    end_frame,
+)
+
+
+def test_frame_handling_success():
+    """Successful call frame should have FrameEnd with success=True."""
+    log = StateAccessLog()
+
+    frame_id = start_frame(log)
+    # ... execution happens ...
+    end_frame(log, frame_id, success=True)
+
+    assert len(log.operations) == 2
+    assert isinstance(log.operations[0], FrameStart)
+    assert isinstance(log.operations[1], FrameEnd)
+    assert log.operations[1].success is True
+
+
+def test_frame_handling_failure():
+    """Failed call frame should have FrameEnd with success=False."""
+    log = StateAccessLog()
+
+    frame_id = start_frame(log)
+    # ... execution fails ...
+    end_frame(log, frame_id, success=False)
+
+    assert log.operations[1].success is False
+
+
+def test_nested_frames():
+    """Nested call frames should have correct IDs."""
+    log = StateAccessLog()
+
+    outer_id = start_frame(log)
+    inner_id = start_frame(log)
+    end_frame(log, inner_id, success=True)
+    end_frame(log, outer_id, success=True)
+
+    assert len(log.operations) == 4
+    assert log.operations[0].frame_id == Uint(0)  # outer start
+    assert log.operations[1].frame_id == Uint(1)  # inner start
+    assert log.operations[2].frame_id == Uint(1)  # inner end
+    assert log.operations[3].frame_id == Uint(0)  # outer end
