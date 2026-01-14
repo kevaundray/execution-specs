@@ -20,6 +20,7 @@ from ...state import (
     set_storage,
     set_transient_storage,
 )
+from ...state_access_log import log_storage_read, log_storage_write
 from .. import Evm
 from ..exceptions import OutOfGasError, WriteInStaticContext
 from ..gas import (
@@ -59,6 +60,15 @@ def sload(evm: Evm) -> None:
     value = get_storage(
         evm.message.block_env.state, evm.message.current_target, key
     )
+
+    # ACCESS LOG
+    if evm.access_log is not None:
+        log_storage_read(
+            evm.access_log,
+            evm.message.current_target,
+            key,
+            value,
+        )
 
     push(evm.stack, value)
 
@@ -126,6 +136,17 @@ def sstore(evm: Evm) -> None:
     charge_gas(evm, gas_cost)
     if evm.message.is_static:
         raise WriteInStaticContext
+
+    # ACCESS LOG
+    if evm.access_log is not None:
+        log_storage_write(
+            evm.access_log,
+            evm.message.current_target,
+            key,
+            current_value,
+            new_value,
+        )
+
     set_storage(state, evm.message.current_target, key, new_value)
 
     # PROGRAM COUNTER
