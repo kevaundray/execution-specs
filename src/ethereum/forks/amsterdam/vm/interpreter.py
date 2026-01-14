@@ -306,6 +306,7 @@ def execute_code(message: Message) -> Evm:
         error=None,
         accessed_addresses=message.accessed_addresses,
         accessed_storage_keys=message.accessed_storage_keys,
+        access_log=message.block_env.access_log,
     )
     try:
         if evm.message.code_address in PRE_COMPILED_CONTRACTS:
