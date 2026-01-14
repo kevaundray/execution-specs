@@ -44,6 +44,7 @@ from ..state import (
     rollback_transaction,
     set_code,
 )
+from ..state_access_log import end_frame, start_frame
 from ..vm import Message
 from ..vm.eoa_delegation import get_delegated_code_address, set_delegation
 from ..vm.gas import GAS_CODE_DEPOSIT, charge_gas
@@ -238,6 +239,11 @@ def process_message(message: Message) -> Evm:
     if message.depth > STACK_DEPTH_LIMIT:
         raise StackDepthLimitError("Stack depth limit reached")
 
+    # ACCESS LOG - start frame
+    child_frame_id = None
+    if message.block_env.access_log is not None:
+        child_frame_id = start_frame(message.block_env.access_log)
+
     # take snapshot of state before processing the message
     begin_transaction(state, transient_storage)
 
@@ -253,6 +259,15 @@ def process_message(message: Message) -> Evm:
         rollback_transaction(state, transient_storage)
     else:
         commit_transaction(state, transient_storage)
+
+    # ACCESS LOG - end frame
+    if message.block_env.access_log is not None and child_frame_id is not None:
+        end_frame(
+            message.block_env.access_log,
+            child_frame_id,
+            evm.error is None,
+        )
+
     return evm
 
 
@@ -291,6 +306,7 @@ def execute_code(message: Message) -> Evm:
         error=None,
         accessed_addresses=message.accessed_addresses,
         accessed_storage_keys=message.accessed_storage_keys,
+        access_log=message.block_env.access_log,
     )
     try:
         if evm.message.code_address in PRE_COMPILED_CONTRACTS:

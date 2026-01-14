@@ -16,6 +16,7 @@ from ethereum_types.numeric import U256, Uint
 from .. import Evm
 from ..gas import GAS_BASE, GAS_BLOCK_HASH, charge_gas
 from ..stack import pop, push
+from ...state_access_log import log_blockhash_read
 
 
 def block_hash(evm: Evm) -> None:
@@ -57,6 +58,14 @@ def block_hash(evm: Evm) -> None:
         current_block_hash = evm.message.block_env.block_hashes[
             -(current_block_number - block_number)
         ]
+
+    # ACCESS LOG
+    if evm.access_log is not None and current_block_hash != b"\x00":
+        log_blockhash_read(
+            evm.access_log,
+            block_number,
+            current_block_hash,
+        )
 
     push(evm.stack, U256.from_be_bytes(current_block_hash))
 
