@@ -477,8 +477,26 @@ class T8N(Load):
         execution_payload = self.payload.to_execution_payload(self.fork)
 
         # Build the NewPayloadRequest
+        # V3+ requests require additional parameters
         NewPayloadRequest = self.fork.NewPayloadRequest
-        request = NewPayloadRequest(payload=execution_payload)
+        if self.fork.has_beacon_roots_address:
+            # V3+ request with blob hashes and parent beacon root
+            from ethereum_types.bytes import Bytes32
+
+            blob_hashes = self.payload.blob_versioned_hashes or ()
+            parent_beacon_root = (
+                self.payload.parent_beacon_block_root
+                if self.payload.parent_beacon_block_root is not None
+                else Bytes32(bytes(32))
+            )
+            request = NewPayloadRequest(
+                payload=execution_payload,
+                expected_blob_versioned_hashes=blob_hashes,
+                parent_beacon_block_root=parent_beacon_root,
+            )
+        else:
+            # V1/V2 request
+            request = NewPayloadRequest(payload=execution_payload)
 
         # Call validate_execution_payload
         result = self.fork.validate_execution_payload(

@@ -71,6 +71,10 @@ class Payload:
     blob_gas_used: Optional[U64]
     excess_blob_gas: Optional[U64]
 
+    # V3 (Cancun) request fields (for NewPayloadRequestV3)
+    blob_versioned_hashes: Optional[Tuple[Bytes32, ...]]
+    parent_beacon_block_root: Optional[Bytes32]
+
     # V4 (Prague) fields - placeholder for execution requests
     execution_requests: Optional[List[Any]]
 
@@ -139,13 +143,26 @@ class Payload:
             )
 
     def _parse_v3_fields(self, data: Dict[str, Any]) -> None:
-        """Parse V3 (Cancun) fields - blob gas."""
+        """Parse V3 (Cancun) fields - blob gas and request params."""
         self.blob_gas_used = None
         self.excess_blob_gas = None
+        self.blob_versioned_hashes = None
+        self.parent_beacon_block_root = None
+
         if "blobGasUsed" in data:
             self.blob_gas_used = hex_to_u64(data["blobGasUsed"])
         if "excessBlobGas" in data:
             self.excess_blob_gas = hex_to_u64(data["excessBlobGas"])
+
+        # Parse V3 request-specific fields
+        if "blobVersionedHashes" in data:
+            self.blob_versioned_hashes = tuple(
+                Bytes32(hex_to_bytes(h)) for h in data["blobVersionedHashes"]
+            )
+        if "parentBeaconBlockRoot" in data:
+            self.parent_beacon_block_root = Bytes32(
+                hex_to_bytes(data["parentBeaconBlockRoot"])
+            )
 
     def _parse_v4_fields(self, data: Dict[str, Any]) -> None:
         """Parse V4 (Prague) fields - execution requests (placeholder)."""
