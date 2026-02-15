@@ -6,7 +6,7 @@ from typing import Any, Dict, Generator, List, Self, SupportsBytes, Tuple, Type
 from pydantic import Field
 
 from execution_testing.base_types import Address, Bytes
-from execution_testing.forks import Fork, Frontier
+from execution_testing.forks import Fork
 from execution_testing.test_types import EOA, Transaction
 from execution_testing.vm import Bytecode, ForkOpcodeInterface, Op
 
@@ -25,44 +25,33 @@ class Initcode(Bytecode):
     EIP-3860 are *not* taken into account by any of these calculated costs.
     """
 
-    deploy_code: SupportsBytes | Bytes
+    deploy_code: Bytes | Bytecode
     """
     Bytecode to be deployed by the initcode.
-    """
-    execution_gas: int
-    """
-    Gas cost of executing the initcode, without considering deployment gas
-    costs.
-    """
-    deployment_gas: int
-    """
-    Gas cost of deploying the cost, subtracted after initcode execution,
     """
 
     def __new__(
         cls,
         *,
-        deploy_code: SupportsBytes | Bytes | None = None,
+        deploy_code: Bytecode | SupportsBytes | None = None,
         initcode_length: int | None = None,
         initcode_prefix: Bytecode | None = None,
         padding_byte: int = 0x00,
         name: str = "",
-        fork: Fork = Frontier,
     ) -> Self:
         """
-        Generate legacy initcode that inits a contract with the specified code.
+        Generate an initcode that returns a contract with the specified code.
         The initcode can be padded to a specified length for testing purposes.
-
-        Gas costs are calculated using the fork's gas costs and memory
-        expansion formula. Defaults to Frontier if no fork is provided.
         """
         if deploy_code is None:
             deploy_code = Bytecode()
+        elif not isinstance(deploy_code, Bytecode):
+            deploy_code = Bytes(deploy_code)
         if initcode_prefix is None:
             initcode_prefix = Bytecode()
 
         initcode = initcode_prefix
-        code_length = len(bytes(deploy_code))
+        code_length = len(deploy_code)
 
         # PUSH2: length=<bytecode length>
         initcode += Op.PUSH2(code_length)
@@ -89,7 +78,7 @@ class Initcode(Bytecode):
         )
 
         # RETURN: offset=0, length
-        initcode += Op.RETURN
+        initcode += Op.RETURN(code_deposit_size=len(deploy_code))
 
         initcode_plus_deploy_code = bytes(initcode) + bytes(deploy_code)
         padding_bytes = bytes()
@@ -112,15 +101,47 @@ class Initcode(Bytecode):
             pushed_stack_items=initcode.pushed_stack_items,
             max_stack_height=initcode.max_stack_height,
             min_stack_height=initcode.min_stack_height,
+            name=name,
+            opcode_list=initcode.opcode_list,
         )
-        instance._name_ = name
         instance.deploy_code = deploy_code
-        instance.execution_gas = initcode.gas_cost(fork)
-        instance.deployment_gas = Op.RETURN(
-            code_deposit_size=len(bytes(instance.deploy_code))
-        ).gas_cost(fork)
 
         return instance
+
+    def execution_gas(
+        self,
+        fork: Type[ForkOpcodeInterface],
+        *,
+        block_number: int = 0,
+        timestamp: int = 0,
+    ) -> int:
+        """
+        Gas cost of executing the initcode, charged before the code
+        deposit fee.
+        """
+        return self.gas_cost(
+            fork,
+            block_number=block_number,
+            timestamp=timestamp,
+        ) - self.deployment_gas(
+            fork,
+            block_number=block_number,
+            timestamp=timestamp,
+        )
+
+    def deployment_gas(
+        self,
+        fork: Type[ForkOpcodeInterface],
+        *,
+        block_number: int = 0,
+        timestamp: int = 0,
+    ) -> int:
+        """
+        Gas cost of deploying the contract.
+        """
+        return Op.RETURN(code_deposit_size=len(self.deploy_code)).gas_cost(
+            fork, block_number=block_number, timestamp=timestamp
+        )
 
 
 class CodeGasMeasure(Bytecode):

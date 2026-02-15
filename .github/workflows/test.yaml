@@ -66,6 +66,8 @@ jobs:
         run: sudo DEBIAN_FRONTEND=noninteractive apt-get install --yes build-essential pkg-config
       - name: Run py3 tests
         run: uvx tox -e py3
+        env:
+          PYTEST_XDIST_AUTO_NUM_WORKERS: auto
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7
         with:
@@ -159,6 +161,8 @@ jobs:
       - uses: ./.github/actions/build-evmone
       - name: Run py3 tests
         run: uvx tox -e tests_pytest_py3
+        env:
+          PYTEST_XDIST_AUTO_NUM_WORKERS: auto
 
   tests_pytest_pypy3:
     runs-on: [self-hosted-ghr, size-xl-x64]
