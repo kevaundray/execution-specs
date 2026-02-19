@@ -15,7 +15,9 @@ Supported Opcodes:
 
 import pytest
 from execution_testing import (
+    AccessList,
     Account,
+    Address,
     Alloc,
     BenchmarkTestFiller,
     Block,
@@ -28,10 +30,82 @@ from execution_testing import (
     JumpLoopGenerator,
     Op,
     TestPhaseManager,
+    Transaction,
     While,
     compute_create2_address,
     compute_create_address,
 )
+
+
+@pytest.mark.parametrize("transfer_amount", [0, 1])
+@pytest.mark.parametrize("opcode", [Op.CALL, Op.CALLCODE])
+@pytest.mark.parametrize("access_warm", [True, False])
+def test_contract_calling_many_addresses(
+    benchmark_test: BenchmarkTestFiller,
+    pre: Alloc,
+    fork: Fork,
+    transfer_amount: int,
+    opcode: Op,
+    access_warm: bool,
+    gas_benchmark_value: int,
+    tx_gas_limit: int,
+) -> None:
+    """Benchmark a contract that calls many addresses."""
+    warm_start_addr = 2**80 - 1
+    setup = Op.PUSH20(warm_start_addr) if access_warm else Op.GAS
+
+    def loop(threshold: int) -> Bytecode:
+        return (
+            Op.JUMPDEST
+            + opcode(address=Op.DUP6, value=transfer_amount)
+            + Op.SWAP1
+            + Op.SUB
+            + Op.JUMPI(Op.GT(Op.GAS, threshold), len(setup))
+        )
+
+    cost = loop(0xFFFF).gas_cost(fork)
+    code = setup + loop(cost)
+
+    contract_addr = pre.deploy_contract(
+        code=code,
+        balance=10**18 if transfer_amount > 0 else 0,
+    )
+
+    intrinsic_cost_calc = fork.transaction_intrinsic_cost_calculator()
+    intrinsic_cost = intrinsic_cost_calc()
+    access_list_addr_cost = fork.gas_costs().G_ACCESS_LIST_ADDRESS
+
+    txs = []
+    remaining_gas = gas_benchmark_value
+    while remaining_gas > intrinsic_cost:
+        per_tx_gas = min(tx_gas_limit, remaining_gas)
+        remaining_gas -= per_tx_gas
+
+        access_list = None
+        if access_warm:
+            iterations = (per_tx_gas - intrinsic_cost) // (
+                access_list_addr_cost + cost
+            )
+            if iterations <= 0:
+                break
+            access_list = [
+                AccessList(
+                    address=Address(warm_start_addr - i),
+                    storage_keys=[],
+                )
+                for i in range(iterations)
+            ]
+
+        txs.append(
+            Transaction(
+                to=contract_addr,
+                sender=pre.fund_eoa(),
+                gas_limit=per_tx_gas,
+                access_list=access_list,
+            )
+        )
+
+    benchmark_test(blocks=[Block(txs=txs)])
 
 
 @pytest.mark.repricing(max_code_size_ratio=0)
