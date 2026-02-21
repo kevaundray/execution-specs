@@ -5,7 +5,7 @@ Loader for code from the relevant fork.
 from inspect import signature
 from typing import Any, Final
 
-from ethereum.state import EMPTY_ACCOUNT
+from ethereum.state import EMPTY_ACCOUNT, Account
 from ethereum_spec_tools.forks import Hardfork
 
 
@@ -202,9 +202,7 @@ class ForkLoad:
     @property
     def EMPTY_ACCOUNT(self) -> Any:
         """EMPTY_ACCOUNT of the fork."""
-        if self.has_block_state:
-            return EMPTY_ACCOUNT
-        return self._module("fork_types").EMPTY_ACCOUNT
+        return EMPTY_ACCOUNT
 
     @property
     def Header(self) -> Any:
@@ -214,7 +212,7 @@ class ForkLoad:
     @property
     def Account(self) -> Any:
         """Account class of the fork."""
-        return self._module("fork_types").Account
+        return Account
 
     @property
     def Transaction(self) -> Any:
