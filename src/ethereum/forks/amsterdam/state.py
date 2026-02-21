@@ -30,8 +30,14 @@ from ethereum.state import (
     InternalNode,
     Root,
 )
-
-from .trie import EMPTY_TRIE_ROOT, Trie, copy_trie, root, trie_get, trie_set
+from ethereum.trie import (
+    EMPTY_TRIE_ROOT,
+    Trie,
+    copy_trie,
+    root,
+    trie_get,
+    trie_set,
+)
 
 
 @dataclass
