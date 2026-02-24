@@ -20,9 +20,9 @@ consensus-specs and can change over forks.
 from .forkchoice_update import notify_forkchoice_updated
 from .get_payload import get_payload
 from .new_payload import (
+    chain_verify_and_notify_new_payload,
     is_valid_block_hash,
     is_valid_versioned_hashes,
-    notify_new_payload,
     verify_and_notify_new_payload,
 )
 from .types import (
@@ -43,10 +43,10 @@ __all__ = [
     "NewPayloadRequest",
     "PayloadAttributes",
     "PayloadId",
+    "chain_verify_and_notify_new_payload",
     "get_payload",
     "is_valid_block_hash",
     "is_valid_versioned_hashes",
     "notify_forkchoice_updated",
-    "notify_new_payload",
     "verify_and_notify_new_payload",
 ]
