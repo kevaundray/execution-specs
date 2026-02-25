@@ -82,7 +82,7 @@ def encode_account(raw_account_data: Account, storage_root: Bytes) -> Bytes:
             raw_account_data.nonce,
             raw_account_data.balance,
             storage_root,
-            keccak256(raw_account_data.code),
+            raw_account_data.code_hash,
         )
     )
 
