@@ -19,6 +19,7 @@ from .execution_engine.types import NewPayloadRequest
 from .fork import ChainContext
 from .fork_types import VersionedHash
 from .stateless_types import ExecutionWitness
+from .witness_state import WitnessState, build_code_db, build_node_db
 
 # Amsterdam currently carries execution requests as raw bytes in order.
 ExecutionRequests = Tuple[Bytes, ...]
@@ -173,14 +174,16 @@ def verify_stateless_new_payload(
         parent_header=parent_header,
     )
 
-    # TODO: Build a WitnessState from the execution witness to serve
-    # as the pre_state for stateless execution.
-    pre_state = None
+    pre_state = WitnessState(
+        _node_db=build_node_db(witness.state),
+        _state_root=parent_header.state_root,
+        _code_db=build_code_db(witness.codes),
+    )
 
     try:
         execute_new_payload_request(
             stateless_input.new_payload_request,
-            pre_state,  # type: ignore[arg-type]
+            pre_state,
             chain_context,
         )
         successful_validation = True
