@@ -3,17 +3,20 @@ Stateless validation interfaces.
 """
 
 from dataclasses import dataclass
-from typing import Sequence, Tuple
+from typing import List, Sequence, Tuple
 
+from ethereum_rlp import rlp
 from ethereum_types.bytes import Bytes
 from ethereum_types.frozen import slotted_freezable
 from ethereum_types.numeric import U64
 
-from ethereum.crypto.hash import Hash32
+from ethereum.crypto.hash import Hash32, keccak256
 from ethereum.state import Root
 
-from .blocks import Block
+from .blocks import Block, Header
+from .execution_engine.new_payload import execute_new_payload_request
 from .execution_engine.types import NewPayloadRequest
+from .fork import ChainContext
 from .fork_types import VersionedHash
 from .stateless_types import ExecutionWitness
 
@@ -96,6 +99,9 @@ class StatelessInput:
 class StatelessValidationResult:
     """
     Result returned by stateless validation.
+
+    Note: We use return values to denote "public inputs"
+
     """
 
     new_payload_request_root: Hash32
@@ -126,20 +132,65 @@ def new_payload_request_to_block(
     raise NotImplementedError
 
 
+def validate_headers(
+    headers: List[Header],
+    encoded_headers: Tuple[Bytes, ...],
+) -> List[Hash32]:
+    """
+    Validate that a sequence of encoded headers forms a contiguous chain.
+
+    Each header's ``parent_hash`` must match the hash of the preceding
+    header. Return the list of block hashes.
+    """
+    block_hashes: List[Hash32] = [
+        keccak256(header_bytes) for header_bytes in encoded_headers
+    ]
+    for i in range(1, len(headers)):
+        if headers[i].parent_hash != block_hashes[i - 1]:
+            raise Exception("Witness headers are not contiguous")
+    return block_hashes
+
+
 def verify_stateless_new_payload(
     stateless_input: StatelessInput,
 ) -> StatelessValidationResult:
     """
     Statelessly validate the execution payload.
     """
-    # TODO: We can fill this in properly once the pre-state PR
-    # TODO: and state change PRs are completed.
-    # TODO: We would effectively call `verify_and_notify_new_payload`
+    witness = stateless_input.witness
+
+    # Validate the headers are contiguous and compute their
+    # blockhashes
+    decoded_headers = [
+        rlp.decode_to(Header, header_bytes) for header_bytes in witness.headers
+    ]
+    block_hashes = validate_headers(decoded_headers, witness.headers)
+    parent_header = decoded_headers[-1]
+
+    chain_context = ChainContext(
+        chain_id=stateless_input.chain_config.chain_id,
+        block_hashes=block_hashes,
+        parent_header=parent_header,
+    )
+
+    # TODO: Build a WitnessState from the execution witness to serve
+    # as the pre_state for stateless execution.
+    pre_state = None
+
+    try:
+        execute_new_payload_request(
+            stateless_input.new_payload_request,
+            pre_state,  # type: ignore[arg-type]
+            chain_context,
+        )
+        successful_validation = True
+    except Exception:
+        successful_validation = False
 
     return StatelessValidationResult(
         new_payload_request_root=compute_new_payload_request_root(
             stateless_input
         ),
-        successful_validation=True,
+        successful_validation=successful_validation,
         chain_config=stateless_input.chain_config,
     )
