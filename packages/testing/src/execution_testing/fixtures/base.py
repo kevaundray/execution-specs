@@ -1,7 +1,6 @@
 """Base fixture definitions used to define all fixture types."""
 
 import hashlib
-import json
 from enum import Enum, auto
 from functools import cached_property
 from typing import (
@@ -29,6 +28,7 @@ from pydantic import (
 from pydantic_core.core_schema import ValidatorFunctionWrapHandler
 
 from execution_testing.base_types import CamelModel, ReferenceSpec
+from execution_testing.fixtures.codec import JsonCodec
 from execution_testing.client_clis.cli_types import OpcodeCount
 from execution_testing.forks import Fork
 
@@ -138,11 +138,13 @@ class BaseFixture(CamelModel):
 
     @cached_property
     def hash(self) -> str:
-        """Returns the hash of the fixture."""
-        json_str = json.dumps(
-            self.json_dict, sort_keys=True, separators=(",", ":")
-        )
-        h = hashlib.sha256(json_str.encode("utf-8")).hexdigest()
+        """Return the hash of the fixture."""
+        # Always use JsonCodec for hashing to maintain hash stability
+        # across codec changes.
+        codec = JsonCodec()
+        h = hashlib.sha256(
+            codec.deterministic_bytes(self.json_dict)
+        ).hexdigest()
         return f"0x{h}"
 
     def json_dict_with_info(self, hash_only: bool = False) -> Dict[str, Any]:
