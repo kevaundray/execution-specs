@@ -1,6 +1,5 @@
 """Defines models for interacting with JSON fixture files."""
 
-import json
 from pathlib import Path
 from typing import Any, Dict, ItemsView, Iterator, KeysView, ValuesView
 
@@ -10,6 +9,7 @@ from pydantic import SerializeAsAny
 from execution_testing.base_types import EthereumTestRootModel
 
 from .base import BaseFixture
+from .codec import get_codec_for_extension
 
 
 class Fixtures(EthereumTestRootModel):
@@ -53,19 +53,20 @@ class Fixtures(EthereumTestRootModel):
 
     def collect_into_file(self, file_path: Path) -> None:
         """
-        For all formats, we join the fixtures as json into a single file.
-
-        Note: We don't use pydantic model_dump_json() on the Fixtures object as
-        we add the hash to the info field on per-fixture basis.
+        For all formats, join fixtures into a single file using the
+        appropriate codec based on file extension.
         """
-        json_fixtures: Dict[str, Dict[str, Any]] = {}
+        codec = get_codec_for_extension(file_path.suffix)
+        fixtures_dict: Dict[str, Dict[str, Any]] = {}
         lock_file_path = file_path.with_suffix(".lock")
         with FileLock(lock_file_path):
             if file_path.exists():
-                json_fixtures = json.loads(file_path.read_bytes())
+                fixtures_dict = codec.load_fixtures(
+                    file_path.read_bytes()
+                )
             for name, fixture in self.items():
-                json_fixtures[name] = fixture.json_dict_with_info()
+                fixtures_dict[name] = fixture.json_dict_with_info()
 
-            file_path.write_text(
-                json.dumps(dict(sorted(json_fixtures.items())), indent=4)
+            file_path.write_bytes(
+                codec.dump_fixtures(fixtures_dict)
             )
