@@ -1,12 +1,5 @@
 """Ethereum test fixture format definitions."""
 
-from .codec import (
-    FixtureCodec,
-    JsonCodec,
-    RlpCodec,
-    get_codec,
-    get_codec_for_extension,
-)
 from .base import (
     BaseFixture,
     FixtureFillingPhase,
@@ -22,6 +15,13 @@ from .blockchain import (
     BlockchainEngineXFixture,
     BlockchainFixture,
     BlockchainFixtureCommon,
+)
+from .codec import (
+    FixtureCodec,
+    JsonCodec,
+    RlpCodec,
+    get_codec,
+    get_codec_for_extension,
 )
 from .collector import (
     FixtureCollector,

@@ -28,8 +28,8 @@ from pydantic import (
 from pydantic_core.core_schema import ValidatorFunctionWrapHandler
 
 from execution_testing.base_types import CamelModel, ReferenceSpec
-from execution_testing.fixtures.codec import JsonCodec
 from execution_testing.client_clis.cli_types import OpcodeCount
+from execution_testing.fixtures.codec import JsonCodec
 from execution_testing.forks import Fork
 
 

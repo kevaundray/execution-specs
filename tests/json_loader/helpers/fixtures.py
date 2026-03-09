@@ -5,9 +5,8 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Self, Type
 
-from execution_testing.fixtures.codec import get_codec_for_extension
-
 from _pytest.nodes import Node
+from execution_testing.fixtures.codec import get_codec_for_extension
 from pytest import Collector, Config, File, Item
 
 

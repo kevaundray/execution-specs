@@ -43,7 +43,9 @@ def _json_to_rlp(value: Any) -> Sequence:
             pairs.append([k.encode("utf-8"), _json_to_rlp(value[k])])
         return [_TAG_DICT] + pairs
     else:
-        raise TypeError(f"unsupported type for RLP fixture encoding: {type(value)}")
+        raise TypeError(
+            f"unsupported type for RLP fixture encoding: {type(value)}"
+        )
 
 
 def _rlp_to_json(value: Simple) -> Any:
@@ -109,9 +111,7 @@ class FixtureCodec(Protocol):
         """Serialize a single streaming entry (key + serialized value)."""
         ...
 
-    def load_partial_entries(
-        self, data: bytes
-    ) -> Iterator[Tuple[str, str]]:
+    def load_partial_entries(self, data: bytes) -> Iterator[Tuple[str, str]]:
         """Deserialize streaming entries from bytes."""
         ...
 
@@ -128,32 +128,36 @@ class JsonCodec:
     """JSON fixture codec."""
 
     @property
-    def suffix(self) -> str:
+    def suffix(self) -> str:  # noqa: D102
         return ".json"
 
     @property
-    def partial_suffix(self) -> str:
+    def partial_suffix(self) -> str:  # noqa: D102
         return ".jsonl"
 
-    def load_fixtures(self, data: bytes) -> Dict[str, Any]:
+    def load_fixtures(self, data: bytes) -> Dict[str, Any]:  # noqa: D102
         return json.loads(data)
 
-    def dump_fixtures(self, fixtures: Dict[str, Any]) -> bytes:
+    def dump_fixtures(self, fixtures: Dict[str, Any]) -> bytes:  # noqa: D102
         return json.dumps(
             dict(sorted(fixtures.items())), indent=4
         ).encode("utf-8")
 
-    def deterministic_bytes(self, value: Dict[str, Any]) -> bytes:
+    def deterministic_bytes(  # noqa: D102
+        self, value: Dict[str, Any]
+    ) -> bytes:
         return json.dumps(
             value, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
 
-    def dump_partial_entry(self, key: str, value_str: str) -> bytes:
-        return (json.dumps({"k": key, "v": value_str}) + "\n").encode(
-            "utf-8"
-        )
+    def dump_partial_entry(  # noqa: D102
+        self, key: str, value_str: str
+    ) -> bytes:
+        return (
+            json.dumps({"k": key, "v": value_str}) + "\n"
+        ).encode("utf-8")
 
-    def load_partial_entries(
+    def load_partial_entries(  # noqa: D102
         self, data: bytes
     ) -> Iterator[Tuple[str, str]]:
         for line in data.decode("utf-8").splitlines():
@@ -162,10 +166,14 @@ class JsonCodec:
                 entry = json.loads(line)
                 yield (entry["k"], entry["v"])
 
-    def dump_index_entry(self, entry: Dict[str, Any]) -> bytes:
+    def dump_index_entry(  # noqa: D102
+        self, entry: Dict[str, Any]
+    ) -> bytes:
         return (json.dumps(entry) + "\n").encode("utf-8")
 
-    def load_index_entries(self, data: bytes) -> Iterator[Dict[str, Any]]:
+    def load_index_entries(  # noqa: D102
+        self, data: bytes
+    ) -> Iterator[Dict[str, Any]]:
         for line in data.decode("utf-8").splitlines():
             line = line.strip()
             if line:
@@ -176,53 +184,71 @@ class RlpCodec:
     """RLP fixture codec."""
 
     @property
-    def suffix(self) -> str:
+    def suffix(self) -> str:  # noqa: D102
         return ".rlp"
 
     @property
-    def partial_suffix(self) -> str:
+    def partial_suffix(self) -> str:  # noqa: D102
         return ".rlpl"
 
-    def load_fixtures(self, data: bytes) -> Dict[str, Any]:
+    def load_fixtures(  # noqa: D102
+        self, data: bytes
+    ) -> Dict[str, Any]:
         decoded = rlp_decode(data)
         return _rlp_to_json(decoded)
 
-    def dump_fixtures(self, fixtures: Dict[str, Any]) -> bytes:
+    def dump_fixtures(  # noqa: D102
+        self, fixtures: Dict[str, Any]
+    ) -> bytes:
         return rlp_encode(_json_to_rlp(fixtures))
 
-    def deterministic_bytes(self, value: Dict[str, Any]) -> bytes:
+    def deterministic_bytes(  # noqa: D102
+        self, value: Dict[str, Any]
+    ) -> bytes:
         return rlp_encode(_json_to_rlp(value))
 
-    def dump_partial_entry(self, key: str, value_str: str) -> bytes:
-        """Length-prefixed entry: [4-byte len][rlp blob]."""
-        blob = rlp_encode([key.encode("utf-8"), value_str.encode("utf-8")])
+    def dump_partial_entry(  # noqa: D102
+        self, key: str, value_str: str
+    ) -> bytes:
+        blob = rlp_encode(
+            [key.encode("utf-8"), value_str.encode("utf-8")]
+        )
         return struct.pack(">I", len(blob)) + blob
 
-    def load_partial_entries(
+    def load_partial_entries(  # noqa: D102
         self, data: bytes
     ) -> Iterator[Tuple[str, str]]:
         offset = 0
         while offset < len(data):
-            (length,) = struct.unpack(">I", data[offset : offset + 4])
+            (length,) = struct.unpack(
+                ">I", data[offset : offset + 4]
+            )
             offset += 4
             blob = data[offset : offset + length]
             offset += length
             decoded = rlp_decode(blob)
-            assert isinstance(decoded, (list, tuple)) and len(decoded) == 2
+            assert isinstance(decoded, (list, tuple))
+            assert len(decoded) == 2
             key = decoded[0]
             value = decoded[1]
-            assert isinstance(key, bytes) and isinstance(value, bytes)
+            assert isinstance(key, bytes)
+            assert isinstance(value, bytes)
             yield (key.decode("utf-8"), value.decode("utf-8"))
 
-    def dump_index_entry(self, entry: Dict[str, Any]) -> bytes:
-        """Length-prefixed RLP-encoded index entry."""
+    def dump_index_entry(  # noqa: D102
+        self, entry: Dict[str, Any]
+    ) -> bytes:
         blob = rlp_encode(_json_to_rlp(entry))
         return struct.pack(">I", len(blob)) + blob
 
-    def load_index_entries(self, data: bytes) -> Iterator[Dict[str, Any]]:
+    def load_index_entries(  # noqa: D102
+        self, data: bytes
+    ) -> Iterator[Dict[str, Any]]:
         offset = 0
         while offset < len(data):
-            (length,) = struct.unpack(">I", data[offset : offset + 4])
+            (length,) = struct.unpack(
+                ">I", data[offset : offset + 4]
+            )
             offset += 4
             blob = data[offset : offset + length]
             offset += length

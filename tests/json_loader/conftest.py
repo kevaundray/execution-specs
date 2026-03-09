@@ -5,11 +5,10 @@ from typing import Callable
 
 from _pytest.config.argparsing import Parser
 from _pytest.nodes import Item
+from execution_testing.fixtures.codec import get_codec_for_extension
 from pytest import Collector, Config, Session, fixture
 
 from ethereum_spec_tools.evm_tools.t8n import ForkCache
-
-from execution_testing.fixtures.codec import get_codec_for_extension
 
 from . import FORKS
 from .helpers import FixturesFile, FixtureTestItem
