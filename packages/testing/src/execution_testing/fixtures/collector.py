@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
     IO,
+    Any,
     ClassVar,
     Dict,
     List,
@@ -25,36 +26,37 @@ from execution_testing.cli.pytest_commands.plugins.shared.fixture_output import 
 )
 
 from .base import BaseFixture
+from .codec import FixtureCodec, JsonCodec
 from .consume import FixtureConsumer
 from .file import Fixtures
 
 
-def merge_partial_fixture_files(output_dir: Path) -> None:
+def merge_partial_fixture_files(
+    output_dir: Path,
+    codec: FixtureCodec | None = None,
+) -> None:
     """
-    Merge all partial fixture JSONL files into final JSON fixture files.
+    Merge all partial fixture files into final fixture files.
 
     Called at session end after all workers have written their partials.
-    Each partial file contains JSONL lines: {"k": fixture_id, "v": json_str}
-
-    Processes one target file at a time, reading its partials sequentially
-    into a dict. Memory = O(entries per target), freed before next target.
     """
-    # Find all partial files
-    partial_files = list(output_dir.rglob("*.partial.*.jsonl"))
+    if codec is None:
+        codec = JsonCodec()
+
+    partial_files = list(
+        output_dir.rglob(f"*.partial.*{codec.partial_suffix}")
+    )
     if not partial_files:
         return
 
     # Group partial files by their target fixture file
-    # e.g., "test.partial.gw0.jsonl" -> "test.json"
     partials_by_target: Dict[Path, List[Path]] = {}
     for partial in partial_files:
-        # Remove .partial.{worker_id}.jsonl suffix to get target
         name = partial.name
-        # Find ".partial." and remove everything after
         idx = name.find(".partial.")
         if idx == -1:
             continue
-        target_name = name[:idx] + ".json"
+        target_name = name[:idx] + codec.suffix
         target_path = partial.parent / target_name
         if target_path not in partials_by_target:
             partials_by_target[target_path] = []
@@ -62,27 +64,17 @@ def merge_partial_fixture_files(output_dir: Path) -> None:
 
     # Merge each group into its target file
     for target_path, partials in partials_by_target.items():
-        # Read partials sequentially into dict (one at a time)
         entries: Dict[str, str] = {}
         for partial in partials:
-            with open(partial) as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        entry = json.loads(line)
-                        entries[entry["k"]] = entry["v"]
+            data = partial.read_bytes()
+            for key, value in codec.load_partial_entries(data):
+                entries[key] = value
 
-        # Write sorted entries to output file
-        with open(target_path, "w") as out_f:
-            out_f.write("{\n")
-            sorted_keys = sorted(entries.keys())
-            last_idx = len(sorted_keys) - 1
-            for i, key in enumerate(sorted_keys):
-                key_json = json.dumps(key)
-                value_indented = entries[key].replace("\n", "\n    ")
-                out_f.write(f"    {key_json}: {value_indented}")
-                out_f.write(",\n" if i < last_idx else "\n")
-            out_f.write("}")
+        # Build final fixture dict and write with codec
+        sorted_fixtures: Dict[str, Any] = {}
+        for key in sorted(entries.keys()):
+            sorted_fixtures[key] = json.loads(entries[key])
+        target_path.write_bytes(codec.dump_fixtures(sorted_fixtures))
 
         # Free memory before processing next target
         entries.clear()
@@ -90,7 +82,6 @@ def merge_partial_fixture_files(output_dir: Path) -> None:
         # Clean up partial files
         for partial in partials:
             partial.unlink()
-            # Also remove lock files
             lock_file = partial.with_suffix(".lock")
             if lock_file.exists():
                 lock_file.unlink()
@@ -203,6 +194,7 @@ class FixtureCollector:
     filler_path: Path
     base_dump_dir: Optional[Path] = None
     generate_index: bool = True
+    codec: FixtureCodec = field(default_factory=JsonCodec)
     # Worker ID for partial files. None = read from env var.
     worker_id: Optional[str] = None
 
@@ -210,8 +202,10 @@ class FixtureCollector:
     all_fixtures: Dict[Path, Fixtures] = field(default_factory=dict)
 
     # Streaming file handles - kept open for module duration
-    _partial_fixture_files: Dict[Path, IO[str]] = field(default_factory=dict)
-    _partial_index_file: Optional[IO[str]] = field(default=None)
+    _partial_fixture_files: Dict[Path, IO[bytes]] = field(
+        default_factory=dict
+    )
+    _partial_index_file: Optional[IO[bytes]] = field(default=None)
     _worker_id_cached: bool = field(default=False, init=False)
 
     # Lightweight tracking for verification (path, format class, debug_path)
@@ -311,15 +305,21 @@ class FixtureCollector:
 
         return fixture_path
 
-    def _get_partial_fixture_file(self, fixture_path: Path) -> "IO[str]":
+    def _get_partial_fixture_file(
+        self, fixture_path: Path
+    ) -> "IO[bytes]":
         """Get or create a file handle for streaming fixtures."""
         worker_id = self._get_worker_id()
         suffix = f".{worker_id}" if worker_id else ".main"
-        partial_path = fixture_path.with_suffix(f".partial{suffix}.jsonl")
+        partial_path = fixture_path.with_suffix(
+            f".partial{suffix}{self.codec.partial_suffix}"
+        )
 
         if partial_path not in self._partial_fixture_files:
             partial_path.parent.mkdir(parents=True, exist_ok=True)
-            self._partial_fixture_files[partial_path] = open(partial_path, "a")
+            self._partial_fixture_files[partial_path] = open(
+                partial_path, "ab"
+            )
 
         return self._partial_fixture_files[partial_path]
 
@@ -331,29 +331,31 @@ class FixtureCollector:
     ) -> None:
         """Stream a single fixture to its partial JSONL file."""
         value = json.dumps(fixture.json_dict_with_info(), indent=4)
-        line = json.dumps({"k": fixture_id, "v": value}) + "\n"
+        entry_bytes = self.codec.dump_partial_entry(fixture_id, value)
 
         f = self._get_partial_fixture_file(fixture_path)
-        f.write(line)
+        f.write(entry_bytes)
         f.flush()  # Ensure data is written immediately
 
-    def _get_partial_index_file(self) -> "IO[str]":
+    def _get_partial_index_file(self) -> "IO[bytes]":
         """Get or create the file handle for streaming index entries."""
         if self._partial_index_file is None:
             worker_id = self._get_worker_id()
             suffix = f".{worker_id}" if worker_id else ".main"
             partial_index_path = (
-                self.output_dir / ".meta" / f"partial_index{suffix}.jsonl"
+                self.output_dir
+                / ".meta"
+                / f"partial_index{suffix}{self.codec.partial_suffix}"
             )
             partial_index_path.parent.mkdir(parents=True, exist_ok=True)
-            self._partial_index_file = open(partial_index_path, "a")
+            self._partial_index_file = open(partial_index_path, "ab")
 
         return self._partial_index_file
 
     def _stream_index_entry_to_partial(self, entry: Dict) -> None:
         """Stream a single index entry to partial JSONL file."""
         f = self._get_partial_index_file()
-        f.write(json.dumps(entry) + "\n")
+        f.write(self.codec.dump_index_entry(entry))
         f.flush()  # Ensure data is written immediately
 
     def close_streaming_files(self) -> None:
