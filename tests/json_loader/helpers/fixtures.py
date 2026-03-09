@@ -1,9 +1,11 @@
 """Base class for all fixture loaders."""
 
-import json
 from abc import ABC, abstractmethod
 from functools import cached_property
+from pathlib import Path
 from typing import Any, Dict, Generator, List, Self, Type
+
+from execution_testing.fixtures.codec import get_codec_for_extension
 
 from _pytest.nodes import Node
 from pytest import Collector, Config, File, Item
@@ -79,10 +81,10 @@ class FixturesFile(File):
 
     @cached_property
     def data(self) -> Dict[str, Any]:
-        """Return the JSON data of the full file."""
+        """Return the fixture data of the full file."""
         # loaded once per worker per file (thanks to cached_property)
-        with self.fspath.open("r", encoding="utf-8") as f:
-            return json.load(f)
+        codec = get_codec_for_extension(Path(str(self.fspath)).suffix)
+        return codec.load_fixtures(Path(str(self.fspath)).read_bytes())
 
     def clear_data_cache(self) -> None:
         """Drop the data cache."""

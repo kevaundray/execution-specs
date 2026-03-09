@@ -9,6 +9,8 @@ from pytest import Collector, Config, Session, fixture
 
 from ethereum_spec_tools.evm_tools.t8n import ForkCache
 
+from execution_testing.fixtures.codec import get_codec_for_extension
+
 from . import FORKS
 from .helpers import FixturesFile, FixtureTestItem
 from .helpers.select_tests import extract_affected_forks
@@ -206,12 +208,12 @@ def pytest_sessionfinish(session: Session, exitstatus: int) -> None:
 def pytest_collect_file(
     file_path: Path, parent: Collector
 ) -> Collector | None:
-    """
-    Pytest hook that collects test cases from fixture JSON files.
-    """
-    if file_path.suffix == ".json":
-        return FixturesFile.from_parent(parent, path=file_path)
-    return None
+    """Pytest hook that collects test cases from fixture files."""
+    try:
+        get_codec_for_extension(file_path.suffix)
+    except ValueError:
+        return None
+    return FixturesFile.from_parent(parent, path=file_path)
 
 
 def pytest_runtest_teardown(item: Item, nextitem: Item) -> None:
