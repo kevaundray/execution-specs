@@ -14,11 +14,12 @@ the sorted output to .json files to the corresponding locations in the output
 directory.
 """
 
-import json
 from pathlib import Path
 from typing import Any, Dict, List, cast
 
 import click
+
+from execution_testing.fixtures.codec import get_codec_for_extension
 
 
 def recursive_sort(
@@ -54,24 +55,15 @@ def recursive_sort(
 
 def order_fixture(input_path: Path, output_path: Path) -> None:
     """
-    Sorts a .json fixture.
+    Sort a fixture file.
 
-    Reads a .json file from the input path, sorts the .json data and writes it
+    Read a fixture file from the input path, sort the data and write it
     to the output path.
-
-    Args:
-      input_path: The Path object of the input .json file.
-      output_path: The Path object of the output .json file.
-
-    Returns:
-        None.
-
     """
-    with input_path.open("r") as f:
-        data = json.load(f)
+    codec = get_codec_for_extension(input_path.suffix)
+    data = codec.load_fixtures(input_path.read_bytes())
     data = recursive_sort(data)
-    with output_path.open("w") as f:
-        json.dump(data, f, indent=4)
+    output_path.write_bytes(codec.dump_fixtures(data))
 
 
 def process_directory(input_dir: Path, output_dir: Path) -> None:
@@ -95,7 +87,7 @@ def process_directory(input_dir: Path, output_dir: Path) -> None:
     for child in input_dir.iterdir():
         if child.is_dir():
             process_directory(child, output_dir / child.name)
-        elif child.suffix == ".json":
+        elif child.suffix in (".json", ".rlp"):
             order_fixture(child, output_dir / child.name)
 
 

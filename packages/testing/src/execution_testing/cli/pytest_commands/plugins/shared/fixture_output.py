@@ -239,7 +239,7 @@ class FixtureOutput(BaseModel):
         """Create tarball using Python's tarfile module (single-threaded)."""
         with tarfile.open(self.output_path, "w:gz") as tar:
             for file in self.directory.rglob("*"):
-                if file.suffix in {".json", ".ini"}:
+                if file.suffix in {".json", ".rlp", ".ini"}:
                     arcname = Path("fixtures") / file.relative_to(
                         self.directory
                     )
@@ -260,7 +260,7 @@ class FixtureOutput(BaseModel):
             # Use Python tarfile for cross-platform tar creation with arcnames
             with tarfile.open(temp_tar, "w") as tar:
                 for file in self.directory.rglob("*"):
-                    if file.suffix in {".json", ".ini"}:
+                    if file.suffix in {".json", ".rlp", ".ini"}:
                         arcname = Path("fixtures") / file.relative_to(
                             self.directory
                         )
