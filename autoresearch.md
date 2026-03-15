@@ -35,3 +35,5 @@ tox_py3_seconds=<seconds>`.
 ## What's Been Tried
 - Baseline: 805.655s via `uvx tox -e py3`. T8n cache hit rate 100%;
   coverage emits module-not-measured warnings.
+- Changed `py3` fill to `-n auto` with `--maxprocesses 8` default (env
+  overrides). Runtime improved to 674.667s.
