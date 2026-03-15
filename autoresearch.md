@@ -33,4 +33,5 @@ tox_py3_seconds=<seconds>`.
   mypy/ruff expectations).
 
 ## What's Been Tried
-- Baseline pending.
+- Baseline: 805.655s via `uvx tox -e py3`. T8n cache hit rate 100%;
+  coverage emits module-not-measured warnings.
