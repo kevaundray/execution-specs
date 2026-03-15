@@ -14,3 +14,4 @@
 {"run":13,"commit":"ccaa875","metric":305.853,"metrics":{},"status":"keep","description":"Remove log-to from py3 fill after dropping coverage/html to cut I/O","timestamp":1773540561447,"segment":0}
 {"run":14,"commit":"9a19ddf","metric":302.011,"metrics":{},"status":"keep","description":"Add --tb=no/--show-capture=no/--disable-warnings to py3 fill to reduce pytest overhead","timestamp":1773540902216,"segment":0}
 {"run":15,"commit":"fe52bba","metric":305.331,"metrics":{},"status":"discard","description":"Removing durations=50 provided no gain (302.011s -> 305.331s), reverted","timestamp":1773541232839,"segment":0}
+{"run":16,"commit":"d95002a","metric":282.179,"metrics":{},"status":"keep","description":"Set eest log level to ERROR to avoid per-test log spam","timestamp":1773541619628,"segment":0}
