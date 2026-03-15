@@ -15,3 +15,6 @@
 {"run":14,"commit":"9a19ddf","metric":302.011,"metrics":{},"status":"keep","description":"Add --tb=no/--show-capture=no/--disable-warnings to py3 fill to reduce pytest overhead","timestamp":1773540902216,"segment":0}
 {"run":15,"commit":"fe52bba","metric":305.331,"metrics":{},"status":"discard","description":"Removing durations=50 provided no gain (302.011s -> 305.331s), reverted","timestamp":1773541232839,"segment":0}
 {"run":16,"commit":"d95002a","metric":282.179,"metrics":{},"status":"keep","description":"Set eest log level to ERROR to avoid per-test log spam","timestamp":1773541619628,"segment":0}
+{"run":17,"commit":"d95002a","metric":284.304,"metrics":{},"status":"discard","description":"Raise cap to 18 workers (from 16) after log-level change; slower than 282.179s","timestamp":1773541936803,"segment":0}
+{"run":18,"commit":"c387416","metric":289.315,"metrics":{},"status":"discard","description":"Lower cap to 14 workers; slower than 16 (282.179s -> 289.315s)","timestamp":1773542241139,"segment":0}
+{"run":19,"commit":"d95002a","metric":282.632,"metrics":{},"status":"discard","description":"Set eest log level to CRITICAL; no improvement vs ERROR (282.179s -> 282.632s)","timestamp":1773542545150,"segment":0}
