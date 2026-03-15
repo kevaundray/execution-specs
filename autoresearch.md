@@ -54,3 +54,5 @@ tox_py3_seconds=<seconds>`.
 - Added `-q` to py3 fill; runtime now 281.771s.
 - Tried redirecting logs to /dev/shm via EEST_LOG_DIR; regressed to 284.987s.
 - Tried disabling EEST logging via env flag; no improvement (282.397s), reverted.
+- Attempted command tweak (17 workers) but accidentally broke fill invocation;
+  result 193.183s invalid, discarded conceptually, tox.ini reverted to prior.
