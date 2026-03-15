@@ -2,3 +2,4 @@
 {"run":1,"commit":"97114fd","metric":0,"metrics":{},"status":"crash","description":"Baseline tox -e py3 run failed: autoresearch.sh duration calc bug (args not passed)","timestamp":1773534318300,"segment":0}
 {"run":2,"commit":"08fa1a9","metric":805.655,"metrics":{},"status":"keep","description":"Baseline tox -e py3 runtime","timestamp":1773535136262,"segment":0}
 {"run":3,"commit":"0a5c361","metric":674.667,"metrics":{},"status":"keep","description":"Increase py3 xdist parallelism default: -n auto with cap via PYTEST_XDIST_MAX_WORKERS=8","timestamp":1773535906141,"segment":0}
+{"run":4,"commit":"5f4a9ab","metric":540.056,"metrics":{},"status":"keep","description":"Raise py3 cap to 12 workers (--maxprocesses default) with -n auto","timestamp":1773536481956,"segment":0}
