@@ -1,0 +1,2 @@
+{"type":"config","name":"Speed up tox -e py3","metricName":"tox_py3_seconds","metricUnit":"s","bestDirection":"lower"}
+{"run":1,"commit":"97114fd","metric":0,"metrics":{},"status":"crash","description":"Baseline tox -e py3 run failed: autoresearch.sh duration calc bug (args not passed)","timestamp":1773534318300,"segment":0}
