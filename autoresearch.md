@@ -47,3 +47,4 @@ tox_py3_seconds=<seconds>`.
   318.418s.
 - Tried cap 24 post-coverage removal; minor regression to 319.575s, kept 16.
 - Added `--no-html` to py3 fill; runtime now 306.274s.
+- Removed `--log-to` from py3 fill; runtime now 305.853s.

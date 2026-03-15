@@ -11,3 +11,4 @@
 {"run":10,"commit":"d1f2fe0","metric":318.418,"metrics":{},"status":"keep","description":"Remove pytest-cov entirely from py3 fill (coverage opts dropped) for speed","timestamp":1773539534874,"segment":0}
 {"run":11,"commit":"4942655","metric":319.575,"metrics":{},"status":"discard","description":"Tried raising cap to 24 after removing coverage; negligible/slower vs 16 (318.418s -> 319.575s)","timestamp":1773539878101,"segment":0}
 {"run":12,"commit":"e4c1ced","metric":306.274,"metrics":{},"status":"keep","description":"Add --no-html to py3 fill after removing coverage; speeds tox -e py3","timestamp":1773540218755,"segment":0}
+{"run":13,"commit":"ccaa875","metric":305.853,"metrics":{},"status":"keep","description":"Remove log-to from py3 fill after dropping coverage/html to cut I/O","timestamp":1773540561447,"segment":0}
