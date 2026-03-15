@@ -6,3 +6,4 @@
 {"run":5,"commit":"4ecafe3","metric":504.597,"metrics":{},"status":"keep","description":"Increase py3 maxprocesses default cap to 16 (still -n auto)","timestamp":1773537019276,"segment":0}
 {"run":6,"commit":"4ecafe3","metric":525.76,"metrics":{},"status":"discard","description":"Raising py3 cap to 24 workers regressed vs 16 (504.597s -> 525.760s)","timestamp":1773537566800,"segment":0}
 {"run":7,"commit":"7d4d631","metric":496.628,"metrics":{},"status":"keep","description":"Drop --cov-branch from py3 fill to reduce coverage overhead","timestamp":1773538107408,"segment":0}
+{"run":8,"commit":"21c455e","metric":513.323,"metrics":{},"status":"discard","description":"Tried raising cap to 20 after removing cov-branch; slower than 16 (496.628s -> 513.323s)","timestamp":1773538650035,"segment":0}
