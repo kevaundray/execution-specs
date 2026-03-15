@@ -45,3 +45,4 @@ tox_py3_seconds=<seconds>`.
 - Dropped coverage XML report (kept term); runtime now 491.407s.
 - Removed pytest-cov from py3 fill (no coverage collection); runtime now
   318.418s.
+- Tried cap 24 post-coverage removal; minor regression to 319.575s, kept 16.
