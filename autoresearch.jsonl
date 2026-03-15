@@ -8,3 +8,4 @@
 {"run":7,"commit":"7d4d631","metric":496.628,"metrics":{},"status":"keep","description":"Drop --cov-branch from py3 fill to reduce coverage overhead","timestamp":1773538107408,"segment":0}
 {"run":8,"commit":"21c455e","metric":513.323,"metrics":{},"status":"discard","description":"Tried raising cap to 20 after removing cov-branch; slower than 16 (496.628s -> 513.323s)","timestamp":1773538650035,"segment":0}
 {"run":9,"commit":"9843242","metric":491.407,"metrics":{},"status":"keep","description":"Drop coverage XML report for py3 fill; retain term report","timestamp":1773539177199,"segment":0}
+{"run":10,"commit":"d1f2fe0","metric":318.418,"metrics":{},"status":"keep","description":"Remove pytest-cov entirely from py3 fill (coverage opts dropped) for speed","timestamp":1773539534874,"segment":0}

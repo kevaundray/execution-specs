@@ -43,3 +43,5 @@ tox_py3_seconds=<seconds>`.
 - Dropped `--cov-branch` from py3 fill; runtime now 496.628s.
 - Tried cap 20 after removing branch coverage; regressed to 513.323s, kept 16.
 - Dropped coverage XML report (kept term); runtime now 491.407s.
+- Removed pytest-cov from py3 fill (no coverage collection); runtime now
+  318.418s.
