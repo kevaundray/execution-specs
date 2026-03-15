@@ -49,3 +49,4 @@ tox_py3_seconds=<seconds>`.
 - Added `--no-html` to py3 fill; runtime now 306.274s.
 - Removed `--log-to` from py3 fill; runtime now 305.853s.
 - Added `--tb=no --show-capture=no --disable-warnings`; runtime now 302.011s.
+- Tried dropping `--durations=50`; regressed to 305.331s, kept durations.
