@@ -42,3 +42,4 @@ tox_py3_seconds=<seconds>`.
 - Tried cap 24 (`--maxprocesses 24`); regressed to 525.760s, reverted to 16.
 - Dropped `--cov-branch` from py3 fill; runtime now 496.628s.
 - Tried cap 20 after removing branch coverage; regressed to 513.323s, kept 16.
+- Dropped coverage XML report (kept term); runtime now 491.407s.
