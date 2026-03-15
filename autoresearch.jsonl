@@ -1,0 +1,23 @@
+{"type":"config","name":"Speed up tox -e py3","metricName":"tox_py3_seconds","metricUnit":"s","bestDirection":"lower"}
+{"run":1,"commit":"97114fd","metric":0,"metrics":{},"status":"crash","description":"Baseline tox -e py3 run failed: autoresearch.sh duration calc bug (args not passed)","timestamp":1773534318300,"segment":0}
+{"run":2,"commit":"08fa1a9","metric":805.655,"metrics":{},"status":"keep","description":"Baseline tox -e py3 runtime","timestamp":1773535136262,"segment":0}
+{"run":3,"commit":"0a5c361","metric":674.667,"metrics":{},"status":"keep","description":"Increase py3 xdist parallelism default: -n auto with cap via PYTEST_XDIST_MAX_WORKERS=8","timestamp":1773535906141,"segment":0}
+{"run":4,"commit":"5f4a9ab","metric":540.056,"metrics":{},"status":"keep","description":"Raise py3 cap to 12 workers (--maxprocesses default) with -n auto","timestamp":1773536481956,"segment":0}
+{"run":5,"commit":"4ecafe3","metric":504.597,"metrics":{},"status":"keep","description":"Increase py3 maxprocesses default cap to 16 (still -n auto)","timestamp":1773537019276,"segment":0}
+{"run":6,"commit":"4ecafe3","metric":525.76,"metrics":{},"status":"discard","description":"Raising py3 cap to 24 workers regressed vs 16 (504.597s -> 525.760s)","timestamp":1773537566800,"segment":0}
+{"run":7,"commit":"7d4d631","metric":496.628,"metrics":{},"status":"keep","description":"Drop --cov-branch from py3 fill to reduce coverage overhead","timestamp":1773538107408,"segment":0}
+{"run":8,"commit":"21c455e","metric":513.323,"metrics":{},"status":"discard","description":"Tried raising cap to 20 after removing cov-branch; slower than 16 (496.628s -> 513.323s)","timestamp":1773538650035,"segment":0}
+{"run":9,"commit":"9843242","metric":491.407,"metrics":{},"status":"keep","description":"Drop coverage XML report for py3 fill; retain term report","timestamp":1773539177199,"segment":0}
+{"run":10,"commit":"d1f2fe0","metric":318.418,"metrics":{},"status":"keep","description":"Remove pytest-cov entirely from py3 fill (coverage opts dropped) for speed","timestamp":1773539534874,"segment":0}
+{"run":11,"commit":"4942655","metric":319.575,"metrics":{},"status":"discard","description":"Tried raising cap to 24 after removing coverage; negligible/slower vs 16 (318.418s -> 319.575s)","timestamp":1773539878101,"segment":0}
+{"run":12,"commit":"e4c1ced","metric":306.274,"metrics":{},"status":"keep","description":"Add --no-html to py3 fill after removing coverage; speeds tox -e py3","timestamp":1773540218755,"segment":0}
+{"run":13,"commit":"ccaa875","metric":305.853,"metrics":{},"status":"keep","description":"Remove log-to from py3 fill after dropping coverage/html to cut I/O","timestamp":1773540561447,"segment":0}
+{"run":14,"commit":"9a19ddf","metric":302.011,"metrics":{},"status":"keep","description":"Add --tb=no/--show-capture=no/--disable-warnings to py3 fill to reduce pytest overhead","timestamp":1773540902216,"segment":0}
+{"run":15,"commit":"fe52bba","metric":305.331,"metrics":{},"status":"discard","description":"Removing durations=50 provided no gain (302.011s -> 305.331s), reverted","timestamp":1773541232839,"segment":0}
+{"run":16,"commit":"d95002a","metric":282.179,"metrics":{},"status":"keep","description":"Set eest log level to ERROR to avoid per-test log spam","timestamp":1773541619628,"segment":0}
+{"run":17,"commit":"d95002a","metric":284.304,"metrics":{},"status":"discard","description":"Raise cap to 18 workers (from 16) after log-level change; slower than 282.179s","timestamp":1773541936803,"segment":0}
+{"run":18,"commit":"c387416","metric":289.315,"metrics":{},"status":"discard","description":"Lower cap to 14 workers; slower than 16 (282.179s -> 289.315s)","timestamp":1773542241139,"segment":0}
+{"run":19,"commit":"d95002a","metric":282.632,"metrics":{},"status":"discard","description":"Set eest log level to CRITICAL; no improvement vs ERROR (282.179s -> 282.632s)","timestamp":1773542545150,"segment":0}
+{"run":20,"commit":"7663fda","metric":281.771,"metrics":{},"status":"keep","description":"Add -q to py3 fill to reduce stdout; slight speedup","timestamp":1773542891308,"segment":0}
+{"run":21,"commit":"7663fda","metric":284.987,"metrics":{},"status":"discard","description":"Redirect EEST_LOG_DIR to /dev/shm/eest-logs; slower than baseline 281.771s","timestamp":1773543226014,"segment":0}
+{"run":22,"commit":"ae8f299","metric":282.397,"metrics":{},"status":"discard","description":"Disable EEST logging via env; no improvement vs baseline 281.771s","timestamp":1773543605007,"segment":0}
