@@ -51,3 +51,4 @@ tox_py3_seconds=<seconds>`.
 - Added `--tb=no --show-capture=no --disable-warnings`; runtime now 302.011s.
 - Tried dropping `--durations=50`; regressed to 305.331s, kept durations.
 - Set `--eest-log-level=ERROR` to cut per-test logging; runtime now 282.179s.
+- Added `-q` to py3 fill; runtime now 281.771s.
