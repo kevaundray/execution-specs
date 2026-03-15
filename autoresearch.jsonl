@@ -4,3 +4,4 @@
 {"run":3,"commit":"0a5c361","metric":674.667,"metrics":{},"status":"keep","description":"Increase py3 xdist parallelism default: -n auto with cap via PYTEST_XDIST_MAX_WORKERS=8","timestamp":1773535906141,"segment":0}
 {"run":4,"commit":"5f4a9ab","metric":540.056,"metrics":{},"status":"keep","description":"Raise py3 cap to 12 workers (--maxprocesses default) with -n auto","timestamp":1773536481956,"segment":0}
 {"run":5,"commit":"4ecafe3","metric":504.597,"metrics":{},"status":"keep","description":"Increase py3 maxprocesses default cap to 16 (still -n auto)","timestamp":1773537019276,"segment":0}
+{"run":6,"commit":"4ecafe3","metric":525.76,"metrics":{},"status":"discard","description":"Raising py3 cap to 24 workers regressed vs 16 (504.597s -> 525.760s)","timestamp":1773537566800,"segment":0}

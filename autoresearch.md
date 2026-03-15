@@ -39,3 +39,4 @@ tox_py3_seconds=<seconds>`.
   overrides). Runtime improved to 674.667s.
 - Raised `py3` default cap to `--maxprocesses 12`; runtime now 540.056s.
 - Raised cap to `--maxprocesses 16`; runtime now 504.597s.
+- Tried cap 24 (`--maxprocesses 24`); regressed to 525.760s, reverted to 16.
