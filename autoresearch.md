@@ -52,3 +52,4 @@ tox_py3_seconds=<seconds>`.
 - Tried dropping `--durations=50`; regressed to 305.331s, kept durations.
 - Set `--eest-log-level=ERROR` to cut per-test logging; runtime now 282.179s.
 - Added `-q` to py3 fill; runtime now 281.771s.
+- Tried redirecting logs to /dev/shm via EEST_LOG_DIR; regressed to 284.987s.

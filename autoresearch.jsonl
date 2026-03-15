@@ -19,3 +19,4 @@
 {"run":18,"commit":"c387416","metric":289.315,"metrics":{},"status":"discard","description":"Lower cap to 14 workers; slower than 16 (282.179s -> 289.315s)","timestamp":1773542241139,"segment":0}
 {"run":19,"commit":"d95002a","metric":282.632,"metrics":{},"status":"discard","description":"Set eest log level to CRITICAL; no improvement vs ERROR (282.179s -> 282.632s)","timestamp":1773542545150,"segment":0}
 {"run":20,"commit":"7663fda","metric":281.771,"metrics":{},"status":"keep","description":"Add -q to py3 fill to reduce stdout; slight speedup","timestamp":1773542891308,"segment":0}
+{"run":21,"commit":"7663fda","metric":284.987,"metrics":{},"status":"discard","description":"Redirect EEST_LOG_DIR to /dev/shm/eest-logs; slower than baseline 281.771s","timestamp":1773543226014,"segment":0}
