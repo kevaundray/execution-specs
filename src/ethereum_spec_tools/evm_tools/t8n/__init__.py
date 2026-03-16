@@ -4,8 +4,28 @@ Create a transition tool for the given fork.
 
 import argparse
 import fnmatch
-import json
 import os
+
+try:
+    import orjson
+
+    def _json_load(f):  # type: ignore
+        return orjson.loads(f.read())
+
+    def _json_dump(obj, f, **kw):  # type: ignore
+        # orjson.dumps returns bytes; write as string for TextIO compat
+        indent = kw.get("indent")
+        opts = orjson.OPT_INDENT_2 if indent else 0
+        f.write(orjson.dumps(obj, option=opts).decode())
+
+except ImportError:
+    import json
+
+    def _json_load(f):  # type: ignore[misc]
+        return json.load(f)
+
+    def _json_dump(obj, f, **kw):  # type: ignore[misc]
+        json.dump(obj, f, **kw)
 from contextlib import AbstractContextManager
 from typing import Any, Final, TextIO, Tuple, Type, TypeVar
 
@@ -186,7 +206,7 @@ class T8N(Load):
             options.input_txs,
             options.blob_parameters,
         ):
-            stdin = json.load(in_file)
+            stdin = _json_load(in_file)
         else:
             stdin = None
 
@@ -210,7 +230,7 @@ class T8N(Load):
             blob_parameters = stdin["blobParams"]
         elif options.blob_parameters is not None:
             with open(options.blob_parameters, "r") as f:
-                blob_parameters = json.load(f)
+                blob_parameters = _json_load(f)
 
         if blob_parameters is not None:
             target_blobs_per_block = parse_hex_or_int(
@@ -527,7 +547,7 @@ class T8N(Load):
             )
             txs_rlp = "0x" + rlp.encode(self.txs.all_txs).hex()
             with open(txs_rlp_path, "w") as f:
-                json.dump(txs_rlp, f)
+                _json_dump(txs_rlp, f)
             self.logger.info(f"Wrote transaction rlp to {txs_rlp_path}")
 
         if self.options.output_alloc == "stdout":
@@ -538,7 +558,7 @@ class T8N(Load):
                 self.options.output_alloc,
             )
             with open(alloc_output_path, "w") as f:
-                json.dump(json_state, f, indent=4)
+                _json_dump(json_state, f, indent=4)
             self.logger.info(f"Wrote alloc to {alloc_output_path}")
 
         if self.options.output_result == "stdout":
@@ -549,7 +569,7 @@ class T8N(Load):
                 self.options.output_result,
             )
             with open(result_output_path, "w") as f:
-                json.dump(json_result, f, indent=4)
+                _json_dump(json_result, f, indent=4)
             self.logger.info(f"Wrote result to {result_output_path}")
 
         if self.options.opcode_count == "stdout":
@@ -562,10 +582,10 @@ class T8N(Load):
                 self.options.opcode_count,
             )
             with open(result_output_path, "w") as f:
-                json.dump(opcode_count_results, f, indent=4)
+                _json_dump(opcode_count_results, f, indent=4)
             self.logger.info(f"Wrote opcode counts to {result_output_path}")
 
         if json_output:
-            json.dump(json_output, self.out_file, indent=4)
+            _json_dump(json_output, self.out_file, indent=4)
 
         return 0

@@ -2,9 +2,27 @@
 Ethereum Specs EVM Transition Tool Interface.
 """
 
-import json
 import tempfile
 from io import StringIO
+
+try:
+    import orjson
+
+    def _json_dumps(obj: object) -> str:
+        return orjson.dumps(obj).decode()
+
+    def _json_loads(s: str) -> object:
+        return orjson.loads(s)
+
+except ImportError:
+    import json
+
+    def _json_dumps(obj: object) -> str:  # type: ignore[misc]
+        return json.dumps(obj)
+
+    def _json_loads(s: str) -> object:  # type: ignore[misc]
+        return json.loads(s)
+
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Optional
 
@@ -119,12 +137,12 @@ class ExecutionSpecsTransitionTool(TransitionTool):
 
         out_stream = StringIO()
 
-        in_stream = StringIO(json.dumps(request_data_json["input"]))
+        in_stream = StringIO(_json_dumps(request_data_json["input"]))
 
         t8n = T8N(t8n_options, out_stream, in_stream, self.fork_cache)
         t8n.run()
 
-        output_dict = json.loads(out_stream.getvalue())
+        output_dict = _json_loads(out_stream.getvalue())
         output: TransitionToolOutput = TransitionToolOutput.model_validate(
             output_dict, context={"exception_mapper": self.exception_mapper}
         )
