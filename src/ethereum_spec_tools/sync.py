@@ -740,9 +740,12 @@ class Sync(ForkTracking):
 
         if not self.options.unoptimized:
             import ethereum_optimized
+            import ethereum_optimized.state_db as optimized_state_db
 
             ethereum_optimized.monkey_patch(state_path=self.options.persist)
+            self._optimized_state_db: Optional[Any] = optimized_state_db
         else:
+            self._optimized_state_db = None
             if self.options.persist is not None:
                 self.log.error("--persist is not supported with --unoptimized")
                 exit(1)
@@ -798,18 +801,23 @@ class Sync(ForkTracking):
                     self.options.persist,
                 )
 
-        state = self.module("state").State()
+        if self._optimized_state_db is not None:
+            state = self._optimized_state_db.State()
+        else:
+            state = self.module("state").State()
+
+        if self._optimized_state_db is not None:
+            self._patch_for_optimized_state()
 
         persisted_block: Optional[Uint] = None
         persisted_block_timestamp: Optional[U256] = None
 
         if self.options.persist is not None:
-            state_mod = self.module("state")
-            persisted_block_opt = state_mod.get_metadata(
-                state, b"block_number"
+            persisted_block_opt = self.state_call(
+                "get_metadata", state, b"block_number"
             )
-            persisted_block_timestamp_opt = state_mod.get_metadata(
-                state, b"block_timestamp"
+            persisted_block_timestamp_opt = self.state_call(
+                "get_metadata", state, b"block_timestamp"
             )
 
             if persisted_block_opt is not None:
@@ -836,14 +844,30 @@ class Sync(ForkTracking):
                 Bloom=self.active_fork.module("fork_types").Bloom,
                 Header=self.active_fork.module("blocks").Header,
                 Block=self.active_fork.module("blocks").Block,
-                set_account=self.active_fork.module("state").set_account,
-                set_storage=self.active_fork.module("state").set_storage,
-                state_root=self.active_fork.module("state").state_root,
+                set_account=(
+                    self._optimized_state_db.set_account
+                    if self._optimized_state_db is not None
+                    else self.active_fork.module("state").set_account
+                ),
+                set_storage=(
+                    self._optimized_state_db.set_storage
+                    if self._optimized_state_db is not None
+                    else self.active_fork.module("state").set_storage
+                ),
+                state_root=(
+                    self._optimized_state_db.state_root
+                    if self._optimized_state_db is not None
+                    else self.active_fork.module("state").state_root
+                ),
                 root=self.active_fork.module("trie").root,
                 hex_to_address=self.active_fork.module(
                     "utils.hexadecimal"
                 ).hex_to_address,
-                store_code=self.active_fork.module("state").store_code,
+                store_code=(
+                    self._optimized_state_db.store_code
+                    if self._optimized_state_db is not None
+                    else self.active_fork.module("state").store_code
+                ),
             )
             genesis.add_genesis_block(
                 description,
@@ -893,8 +917,8 @@ class Sync(ForkTracking):
 
         self.log.debug("persisting blocks and state...")
 
-        state_mod = self.module("state")
-        state_mod.set_metadata(
+        self.state_call(
+            "set_metadata",
             self.chain.state,
             b"chain_id",
             str(self.chain.chain_id).encode(),
@@ -902,8 +926,8 @@ class Sync(ForkTracking):
 
         start = time.monotonic()
 
-        state_mod.commit_db_transaction(self.chain.state)
-        state_mod.begin_db_transaction(self.chain.state)
+        self.state_call("commit_db_transaction", self.chain.state)
+        self.state_call("begin_db_transaction", self.chain.state)
 
         end = time.monotonic()
         self.log.info(
@@ -916,13 +940,61 @@ class Sync(ForkTracking):
         """
         Fetch the persisted chain id from the database.
         """
-        state_mod = self.module("state")
-        chain_id = state_mod.get_metadata(state, b"chain_id")
+        chain_id = self.state_call("get_metadata", state, b"chain_id")
 
         if chain_id is not None:
             chain_id = U64(int(chain_id))
 
         return chain_id
+
+    def state_call(self, func_name: str, *args: Any) -> Any:
+        """
+        Call a state function, preferring the optimized module.
+
+        DB lifecycle functions (metadata, transactions) only exist in
+        the optimized module. Other functions exist in both.
+        """
+        if self._optimized_state_db is not None:
+            return getattr(self._optimized_state_db, func_name)(*args)
+        else:
+            return getattr(self.module("state"), func_name)(*args)
+
+    def _patch_for_optimized_state(self) -> None:
+        """
+        Patch fork modules for the LMDB-backed state.
+
+        Patch ``apply_changes_to_state`` on the ``fork`` module (not
+        ``state``) because ``fork.py`` binds the function at import
+        time via ``from .state import apply_changes_to_state``.
+
+        Wrap ``execute_block`` so that ``block_diff.code_changes`` are
+        injected into ``_code_store`` before root computation (the
+        ``PreState`` protocol does not pass code changes to
+        ``compute_state_root_and_trie_changes``).
+        """
+        assert self._optimized_state_db is not None
+        for fork in self.forks:
+            fork_mod = fork.module("fork")
+            if hasattr(fork_mod, "apply_changes_to_state"):
+                fork_mod.apply_changes_to_state = (
+                    self._optimized_state_db.apply_changes_to_state
+                )
+            if hasattr(fork_mod, "extract_block_diff"):
+                original_extract = fork_mod.extract_block_diff
+
+                def make_extract_wrapper(orig: Any) -> Any:
+                    def wrapper(block_state: Any) -> Any:
+                        diff = orig(block_state)
+                        block_state.pre_state._code_store.update(
+                            diff.code_changes
+                        )
+                        return diff
+
+                    return wrapper
+
+                fork_mod.extract_block_diff = make_extract_wrapper(
+                    original_extract
+                )
 
     def process_blocks(self) -> None:
         """
@@ -985,13 +1057,14 @@ class Sync(ForkTracking):
             gas_since_last_commit += int(block.header.gas_used)
 
             if self.options.persist is not None:
-                state_mod = self.module("state")
-                state_mod.set_metadata(
+                self.state_call(
+                    "set_metadata",
                     self.chain.state,
                     b"block_number",
                     str(self.block_number).encode(),
                 )
-                state_mod.set_metadata(
+                self.state_call(
+                    "set_metadata",
                     self.chain.state,
                     b"block_timestamp",
                     str(block.header.timestamp).encode(),

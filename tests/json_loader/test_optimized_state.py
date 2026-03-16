@@ -1,88 +1,92 @@
 """Tests for the optimized state implementation."""
 
-import sys
-from typing import Any, cast
-
 import pytest
-from ethereum_types.numeric import U256
+from ethereum_types.numeric import U256, Uint
 
-import ethereum.forks.frontier.state as state
-from ethereum.forks.frontier.fork_types import EMPTY_ACCOUNT
+import ethereum.forks.frontier.state as slow_state
+from ethereum.forks.frontier.fork_types import EMPTY_ACCOUNT as FRONTIER_EMPTY
 from ethereum.forks.tangerine_whistle.utils.hexadecimal import hex_to_address
+from ethereum.state import EMPTY_CODE_HASH, Account, BlockDiff
 
 try:
-    import ethereum_optimized.state_db as state_db
+    from ethereum_optimized.state_db import (
+        State,
+        apply_changes_to_state,
+        set_account,
+        set_storage,
+        state_root,
+    )
 
-    class OptimizedState:
-        """Placeholder for the optimized state class."""
-
-        pass
-
-    optimized_state = cast(Any, OptimizedState())
-
-    for name, value in state_db.get_optimized_state_patches(
-        "frontier"
-    ).items():
-        setattr(optimized_state, name, value)
-
+    HAS_OPTIMIZED = True
 except ImportError:
-    pass
+    HAS_OPTIMIZED = False
 
 
-ADDRESS_FOO = hex_to_address("0x00000000219ab540356cbb839cbe05303d7705fa")
+ADDRESS_FOO = hex_to_address(
+    "0x00000000219ab540356cbb839cbe05303d7705fa"
+)
 STORAGE_FOO = U256(101).to_be_bytes32()
 
+EMPTY = Account(
+    nonce=Uint(0), balance=U256(0), code_hash=EMPTY_CODE_HASH
+)
 
-@pytest.mark.skipif(
-    "ethereum_optimized.state_db" not in sys.modules,
+skip_no_optimized = pytest.mark.skipif(
+    not HAS_OPTIMIZED,
     reason="missing dependency (use `pip install 'ethereum[optimized]'`)",
 )
+
+
+@skip_no_optimized
 def test_storage_key() -> None:
     """
-    Tests that optimized state storage operations match the normal
+    Test that optimized state storage operations match the normal
     implementation.
     """
+    opt = State()
+    set_account(opt, ADDRESS_FOO, EMPTY)
+    set_storage(opt, ADDRESS_FOO, STORAGE_FOO, U256(42))
 
-    def actions(impl: Any) -> Any:
-        obj = impl.State()
-        impl.set_account(obj, ADDRESS_FOO, EMPTY_ACCOUNT)
-        impl.set_storage(obj, ADDRESS_FOO, STORAGE_FOO, U256(42))
-        impl.state_root(obj)
-        return obj
+    normal = slow_state.State()
+    slow_state.set_account(normal, ADDRESS_FOO, FRONTIER_EMPTY)
+    slow_state.set_storage(normal, ADDRESS_FOO, STORAGE_FOO, U256(42))
 
-    state_normal = actions(state)
-    state_optimized = actions(optimized_state)
-    assert state.get_storage(
-        state_normal, ADDRESS_FOO, STORAGE_FOO
-    ) == optimized_state.get_storage(state_optimized, ADDRESS_FOO, STORAGE_FOO)
-    assert state.state_root(state_normal) == optimized_state.state_root(
-        state_optimized
+    assert opt.get_storage(ADDRESS_FOO, STORAGE_FOO) == U256(42)
+    assert state_root(opt) == slow_state.state_root(normal)
+
+
+@skip_no_optimized
+def test_apply_changes() -> None:
+    """
+    Test that apply_changes_to_state flushes diffs to the LMDB state
+    and produces the same root as the trie-based state.
+    """
+    opt = State()
+    diff = BlockDiff(
+        account_changes={ADDRESS_FOO: EMPTY},
+        storage_changes={ADDRESS_FOO: {STORAGE_FOO: U256(99)}},
+        code_changes={},
     )
+    apply_changes_to_state(opt, diff)
+
+    normal = slow_state.State()
+    slow_state.set_account(normal, ADDRESS_FOO, FRONTIER_EMPTY)
+    slow_state.set_storage(normal, ADDRESS_FOO, STORAGE_FOO, U256(99))
+
+    assert state_root(opt) == slow_state.state_root(normal)
 
 
-@pytest.mark.skipif(
-    "ethereum_optimized.state_db" not in sys.modules,
-    reason="missing dependency (use `pip install 'ethereum[optimized]'`)",
-)
-def test_resurrection() -> None:
-    """Tests that optimized state handles storage resurrection correctly."""
+@skip_no_optimized
+def test_prestate_protocol() -> None:
+    """
+    Test that the optimized State satisfies the PreState protocol read
+    methods.
+    """
+    opt = State()
+    set_account(opt, ADDRESS_FOO, EMPTY)
+    set_storage(opt, ADDRESS_FOO, STORAGE_FOO, U256(42))
 
-    def actions(impl: Any) -> Any:
-        obj = impl.State()
-        impl.set_account(obj, ADDRESS_FOO, EMPTY_ACCOUNT)
-        impl.set_storage(obj, ADDRESS_FOO, STORAGE_FOO, U256(42))
-        impl.state_root(obj)
-        impl.destroy_storage(obj, ADDRESS_FOO)
-        impl.state_root(obj)
-        impl.set_account(obj, ADDRESS_FOO, EMPTY_ACCOUNT)
-        return obj
-
-    state_normal = actions(state)
-    state_optimized = actions(optimized_state)
-    optimized_state.state_root(state_optimized)
-    assert state.get_storage(
-        state_normal, ADDRESS_FOO, STORAGE_FOO
-    ) == optimized_state.get_storage(state_optimized, ADDRESS_FOO, STORAGE_FOO)
-    assert state.state_root(state_normal) == optimized_state.state_root(
-        state_optimized
-    )
+    assert opt.get_account_optional(ADDRESS_FOO) is not None
+    assert opt.get_storage(ADDRESS_FOO, STORAGE_FOO) == U256(42)
+    assert opt.get_code(EMPTY_CODE_HASH) == b""
+    assert opt.account_has_storage(ADDRESS_FOO) is True

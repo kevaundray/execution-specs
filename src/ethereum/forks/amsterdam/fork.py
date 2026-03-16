@@ -12,7 +12,7 @@ Entry point for the Ethereum specification.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from ethereum_rlp import rlp
 from ethereum_types.bytes import Bytes
@@ -60,10 +60,7 @@ from .requests import (
     compute_requests_hash,
     parse_deposit_requests,
 )
-from .state import (
-    State,
-    apply_changes_to_state,
-)
+from .state import apply_changes_to_state
 from .state_tracker import (
     BlockState,
     TransactionState,
@@ -157,7 +154,7 @@ class BlockChain:
     """
 
     blocks: List[Block]
-    state: State
+    state: Any
     chain_id: U64
 
 

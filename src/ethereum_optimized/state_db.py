@@ -8,475 +8,274 @@ Optimized State.
 Introduction
 ------------
 
-This module contains functions that can be monkey patched into the fork's
-`state` module to use an optimized database backed state.
+LMDB-backed ``PreState`` implementation for high-performance state access
+during sync. Implements the ``PreState`` protocol from ``ethereum.state``.
 """
 
 import logging
-from collections import defaultdict
-from dataclasses import dataclass
-from importlib import import_module
 from types import SimpleNamespace
-from typing import Any, ClassVar, Dict, List, Optional, Set, cast
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     import rust_pyspec_glue
 except ImportError as e:
-    # Add a message, but keep it an ImportError.
     raise e from Exception(
         "Install with `pip install 'ethereum[optimized]'` to enable this "
         "package"
     )
 
-from ethereum_types.bytes import Bytes, Bytes20, Bytes32
+from ethereum_types.bytes import Bytes, Bytes32
 from ethereum_types.numeric import U256, Uint
 
 from ethereum.crypto.hash import Hash32, keccak256
-from ethereum.state import EMPTY_CODE_HASH
+from ethereum.state import (
+    EMPTY_CODE_HASH,
+    Account,
+    Address,
+    BlockDiff,
+    InternalNode,
+    Root,
+)
 
-from .utils import add_item
-
-Address = Bytes20
-Root = Hash32
-Account_ = Any  # noqa N806
+log = logging.getLogger(__name__)
 
 
-class UnmodifiedType:
+class State:
     """
-    Sentinel type to represent a value that hasn't been modified.
+    LMDB-backed ``PreState`` implementation.
+
+    Implement the ``PreState`` protocol using ``rust_pyspec_glue.DB`` for
+    persistent storage.
     """
 
-    pass
+    default_path: Optional[str] = None
 
+    db: Any
+    _code_store: Dict[Hash32, Bytes]
 
-Unmodified = UnmodifiedType()
+    def __init__(self, path: Optional[str] = None) -> None:
+        if path is None:
+            path = State.default_path
 
+        log.info("using optimized state db at %s", path)
 
-def get_optimized_state_patches(fork: str) -> Dict[str, Any]:
-    """
-    Get a dictionary of functions/objects to be monkey patched into the state
-    to make it optimized.
-    """
-    patches: Dict[str, Any] = {}
+        self.db = rust_pyspec_glue.DB(path)
+        self._code_store = {}
+        self.db.begin_mutable()
 
-    types_mod = cast(
-        Any, import_module("ethereum.forks." + fork + ".fork_types")
-    )
-    state_mod = cast(Any, import_module("ethereum.forks." + fork + ".state"))
-    Account = types_mod.Account  # noqa N806
+    def __enter__(self) -> "State":
+        """Support with statements."""
+        return self
 
-    has_transient_storage = hasattr(state_mod, "TransientStorage")
+    def __exit__(self, *args: Any) -> None:
+        """Support with statements."""
+        close_state(self)
 
-    @add_item(patches)
-    @dataclass
-    class State:
-        """
-        The State, backed by a LMDB database.
+    def __eq__(self, other: object) -> bool:
+        """Test equality by comparing state roots."""
+        if not isinstance(other, State):
+            return NotImplemented
+        return state_root(self) == state_root(other)
 
-        When created with `State()` store the db in a temporary directory. When
-        created with `State(path)` open or create the db located at `path`.
-        """
+    # -- PreState protocol --------------------------------------------------
 
-        default_path: ClassVar[Optional[str]] = None
-
-        db: Any
-        dirty_accounts: Dict[Address, Optional[Account_]]
-        dirty_storage: Dict[Address, Dict[Bytes32, U256]]
-        destroyed_accounts: Dict[Address, Uint]
-        tx_restore_points: List[int]
-        journal: List[Any]
-        created_accounts: Set[Address]
-        _code_store: Dict[Hash32, Bytes]
-
-        def __init__(self, path: Optional[str] = None) -> None:
-            logging.info("using optimized state db at %s", path)
-
-            if path is None:
-                path = State.default_path
-
-            self.db = rust_pyspec_glue.DB(path)
-            self.dirty_accounts = {}
-            self.dirty_storage = {}
-            self.destroyed_accounts = defaultdict(lambda: Uint(0))
-            self.tx_restore_points = []
-            self.journal = []
-            self.created_accounts = set()
-            self._code_store = {}
-            self.db.begin_mutable()
-
-        def __eq__(self, other: object) -> bool:
-            """
-            Test for equality by comparing state roots.
-            """
-            if not isinstance(other, State):
-                return NotImplemented
-            return state_root(self) == state_root(other)
-
-        def __enter__(self) -> "State":
-            """Support with statements."""
-            return self
-
-        def __exit__(self, *args: Any) -> None:
-            """Support with statements."""
-            close_state(self)
-
-    @add_item(patches)
-    def close_state(state: State) -> None:
-        """Close a state, releasing all resources it holds."""
-        state.db.close()
-        state.db = None
-        del state.dirty_accounts
-        del state.dirty_storage
-        del state.destroyed_accounts
-        del state.journal
-        del state.created_accounts
-        del state._code_store
-
-    @add_item(patches)
-    def store_code(state: State, code: Bytes) -> Hash32:
-        """Store bytecode and return its hash."""
-        if not code:
-            return EMPTY_CODE_HASH
-        code_hash = keccak256(code)
-        state._code_store[code_hash] = code
-        return code_hash
-
-    @add_item(patches)
-    def get_code(state: State, code_hash: Hash32) -> Bytes:
-        """Return the bytecode for a given code hash."""
-        if code_hash == EMPTY_CODE_HASH:
-            return b""
-        return state._code_store.get(code_hash, b"")
-
-    @add_item(patches)
-    def get_metadata(state: State, key: Bytes) -> Optional[Bytes]:
-        """Get a piece of metadata."""
-        return state.db.get_metadata(key)
-
-    @add_item(patches)
-    def set_metadata(state: State, key: Bytes, value: Bytes) -> None:
-        """Set a piece of metadata."""
-        return state.db.set_metadata(key, value)
-
-    @add_item(patches)
-    def begin_db_transaction(state: State) -> None:
-        """
-        Start a database transaction. A transaction is automatically started
-        when a `State` is created. Nesting of DB transactions is not supported
-        (unlike non-db transactions).
-
-        No operations are supported when not in a transaction.
-        """
-        state.db.begin_mutable()
-        state.tx_restore_points = []
-        state.journal = []
-
-    @add_item(patches)
-    def commit_db_transaction(state: State) -> None:
-        """
-        Commit the current database transaction.
-        """
-        if state.tx_restore_points:
-            raise Exception("In a non-db transaction")
-        flush(state)
-        state.db.commit_mutable()
-
-    @add_item(patches)
-    def state_root(state: State) -> Root:
-        """
-        See `state`.
-        """
-        if state.tx_restore_points:
-            raise Exception("In a non-db transaction")
-        flush(state)
-        return state.db.state_root()
-
-    @add_item(patches)
-    def storage_root(state: State, address: Address) -> Root:
-        """
-        See `state`.
-        """
-        if state.tx_restore_points:
-            raise Exception("In a non-db transaction")
-        flush(state)
-        return state.db.storage_root(address)
-
-    @add_item(patches)
-    def flush(state: State) -> None:
-        """
-        Send everything in the internal caches to the Rust layer.
-        """
-        if state.tx_restore_points:
-            raise Exception("In a non-db transaction")
-        for address, count in state.destroyed_accounts.items():
-            if count:
-                state.db.destroy_storage(address)
-        for address, account in state.dirty_accounts.items():
-            if account is None:
-                state.db.set_account(address, None)
-            else:
-                code = state._code_store.get(account.code_hash, b"")
-                state.db.set_account(
-                    address,
-                    SimpleNamespace(
-                        nonce=account.nonce,
-                        balance=account.balance,
-                        code=code,
-                    ),
-                )
-        for address, storage in state.dirty_storage.items():
-            for key, value in storage.items():
-                state.db.set_storage(address, key, value)
-        state.destroyed_accounts.clear()
-        state.dirty_accounts.clear()
-        state.dirty_storage.clear()
-
-    @add_item(patches)
-    def rollback_db_transaction(state: State) -> None:
-        """
-        Rollback the current database transaction.
-        """
-        if state.tx_restore_points:
-            raise Exception("In a non-db transaction")
-        state.db.rollback_mutable()
-        state.dirty_accounts.clear()
-        state.dirty_storage.clear()
-        state.destroyed_accounts.clear()
-
-    def _begin_transaction(state: State) -> None:
-        """
-        See `state`.
-        """
-        if not state.tx_restore_points:
-            flush(state)
-        state.tx_restore_points.append(len(state.journal))
-
-    if has_transient_storage:
-
-        @add_item(patches)
-        def begin_transaction(
-            state: State,
-            transient_storage: Optional[Any] = None,
-        ) -> None:
-            """
-            See `state`.
-            """
-            _begin_transaction(state)
-            if transient_storage is not None:
-                transient_storage._snapshots.append(
-                    {
-                        k: state_mod.copy_trie(t)
-                        for (k, t) in transient_storage._tries.items()
-                    }
-                )
-
-    else:
-
-        @add_item(patches)
-        def begin_transaction(state: State) -> None:
-            """
-            See `state`.
-            """
-            _begin_transaction(state)
-
-    def _commit_transaction(state: State) -> None:
-        """
-        See `state`.
-        """
-        state.tx_restore_points.pop()
-        if not state.tx_restore_points:
-            state.journal.clear()
-            state.created_accounts.clear()
-            flush(state)
-
-    if has_transient_storage:
-
-        @add_item(patches)
-        def commit_transaction(
-            state: State, transient_storage: Optional[Any] = None
-        ) -> None:
-            """
-            See `state`.
-            """
-            _commit_transaction(state)
-
-            if transient_storage and transient_storage._snapshots:
-                transient_storage._snapshots.pop()
-
-    else:
-
-        @add_item(patches)
-        def commit_transaction(state: State) -> None:
-            """
-            See `state`.
-            """
-            _commit_transaction(state)
-
-    def _rollback_transaction(state: State) -> None:
-        """
-        See `state`.
-        """
-        restore_point = state.tx_restore_points.pop()
-        while len(state.journal) > restore_point:
-            item = state.journal.pop()
-            if len(item) == 3:
-                # Revert a storage key write
-                if item[2] is Unmodified:
-                    del state.dirty_storage[item[0]][item[1]]
-                else:
-                    state.dirty_storage[item[0]][item[1]] = item[2]
-            elif type(item[1]) is dict:
-                # Restore storage that was destroyed by `destroy_storage()`
-                state.destroyed_accounts[item[0]] -= Uint(1)
-                if state.destroyed_accounts[item[0]] == 0:
-                    state.dirty_storage[item[0]] = item[1]
-                    del state.destroyed_accounts[item[0]]
-            else:
-                # Revert a change to an account
-                if item[1] is Unmodified:
-                    del state.dirty_accounts[item[0]]
-                else:
-                    state.dirty_accounts[item[0]] = item[1]
-
-        if not state.tx_restore_points:
-            state.created_accounts.clear()
-
-    if has_transient_storage:
-
-        @add_item(patches)
-        def rollback_transaction(
-            state: State,
-            transient_storage: Optional[Any] = None,
-        ) -> None:
-            """
-            See `state`.
-            """
-            _rollback_transaction(state)
-
-            if transient_storage and transient_storage._snapshots:
-                transient_storage._tries = transient_storage._snapshots.pop()
-
-    else:
-
-        @add_item(patches)
-        def rollback_transaction(state: State) -> None:
-            """
-            See `state`.
-            """
-            _rollback_transaction(state)
-
-    @add_item(patches)
-    def get_storage(state: State, address: Address, key: Bytes32) -> U256:
-        """
-        See `state`.
-        """
-        if (
-            address in state.dirty_storage
-            and key in state.dirty_storage[address]
-        ):
-            return state.dirty_storage[address][key]
-
-        if state.destroyed_accounts[address]:
-            return U256(0)
-        else:
-            return U256(state.db.get_storage(address, key))
-
-    @add_item(patches)
-    def get_storage_original(
-        state: State, address: Address, key: Bytes32
-    ) -> U256:
-        """
-        See `state`.
-        """
-        if address in state.created_accounts:
-            return U256(0)
-        else:
-            return U256(state.db.get_storage(address, key))
-
-    @add_item(patches)
-    def set_storage(
-        state: State, address: Address, key: Bytes32, value: U256
-    ) -> None:
-        """
-        See `state`.
-        """
-        if address not in state.dirty_accounts:
-            state.dirty_accounts[address] = get_account_optional(
-                state, address
-            )
-        if address not in state.dirty_storage:
-            state.dirty_storage[address] = {}
-        if key not in state.dirty_storage[address]:
-            state.journal.append((address, key, Unmodified))
-        else:
-            state.journal.append(
-                (address, key, state.dirty_storage[address][key])
-            )
-        state.dirty_storage[address][key] = value
-
-    @add_item(patches)
     def get_account_optional(
-        state: State, address: Address
-    ) -> Optional[Account_]:
+        self, address: Address
+    ) -> Optional[Account]:
         """
-        See `state`.
+        Get the account at an address.
+
+        Return ``None`` if there is no account at the address.
         """
-        if address in state.dirty_accounts:
-            return state.dirty_accounts[address]
-        account = state.db.get_account_optional(address)
+        account = self.db.get_account_optional(address)
         if account is not None:
             code = account[2]
             if code:
                 code_hash = keccak256(code)
-                state._code_store[code_hash] = code
+                self._code_store[code_hash] = code
             else:
                 code_hash = EMPTY_CODE_HASH
-            return Account(Uint(account[0]), U256(account[1]), code_hash)
+            return Account(
+                Uint(account[0]), U256(account[1]), code_hash
+            )
         else:
             return None
 
-    @add_item(patches)
-    def set_account(
-        state: State, address: Address, account: Optional[Account_]
-    ) -> None:
+    def get_storage(
+        self, address: Address, key: Bytes32
+    ) -> U256:
         """
-        See `state`.
-        """
-        if address not in state.dirty_accounts:
-            state.journal.append((address, Unmodified))
-        if address in state.dirty_accounts:
-            state.journal.append((address, state.dirty_accounts[address]))
-        state.dirty_accounts[address] = account
+        Get a storage value.
 
-    @add_item(patches)
-    def destroy_storage(state: State, address: Address) -> None:
+        Return ``U256(0)`` if the key has not been set.
         """
-        See `state`.
-        """
-        state.journal.append((address, state.dirty_storage.pop(address, {})))
-        state.destroyed_accounts[address] += Uint(1)
-        set_account(state, address, get_account_optional(state, address))
+        return U256(self.db.get_storage(address, key))
 
-    @add_item(patches)
-    def mark_account_created(state: State, address: Address) -> None:
+    def get_code(self, code_hash: Hash32) -> Bytes:
         """
-        See `state`.
+        Get the bytecode for a given code hash.
+
+        Return ``b""`` for ``EMPTY_CODE_HASH``.
         """
-        state.created_accounts.add(address)
+        if code_hash == EMPTY_CODE_HASH:
+            return b""
+        return self._code_store.get(code_hash, b"")
 
-    @add_item(patches)
-    def account_has_storage(state: State, address: Address) -> bool:
+    def account_has_storage(self, address: Address) -> bool:
         """
-        See `state`.
+        Check whether an account has any storage.
+
+        Only needed for EIP-7610.
         """
-        if address in state.dirty_storage:
-            for v in state.dirty_storage[address].values():
-                if v != U256(0):
-                    return True
+        return self.db.has_storage(address)
 
-        if state.destroyed_accounts[address]:
-            return False
+    def compute_state_root_and_trie_changes(
+        self,
+        account_changes: Dict[Address, Optional[Account]],
+        storage_changes: Dict[Address, Dict[Bytes32, U256]],
+    ) -> Tuple[Root, List[InternalNode]]:
+        """
+        Compute the state root after applying changes to the pre-state.
 
-        return state.db.has_storage(address)
+        Flush changes to the Rust DB layer and compute the root. Return
+        an empty list for trie changes (the LMDB backend does not
+        surface internal nodes).
 
-    return patches
+        Mark the state as already flushed so that
+        ``apply_changes_to_state`` does not re-flush.
+        """
+        _flush_changes(self, account_changes, storage_changes)
+        self._changes_flushed = True
+        return self.db.state_root(), []
+
+
+def close_state(state: State) -> None:
+    """Close a state, releasing all resources it holds."""
+    state.db.close()
+    state.db = None
+    del state._code_store
+
+
+def state_root(state: State) -> Root:
+    """Compute the state root of the current state."""
+    return state.db.state_root()
+
+
+def store_code(state: State, code: Bytes) -> Hash32:
+    """Store bytecode and return its hash."""
+    if not code:
+        return EMPTY_CODE_HASH
+    code_hash = keccak256(code)
+    state._code_store[code_hash] = code
+    return code_hash
+
+
+def set_account(
+    state: State,
+    address: Address,
+    account: Optional[Account],
+) -> None:
+    """Set an account in the LMDB state."""
+    if account is None:
+        state.db.set_account(address, None)
+    else:
+        code = state._code_store.get(account.code_hash, b"")
+        state.db.set_account(
+            address,
+            SimpleNamespace(
+                nonce=account.nonce,
+                balance=account.balance,
+                code=code,
+            ),
+        )
+
+
+def set_storage(
+    state: State,
+    address: Address,
+    key: Bytes32,
+    value: U256,
+) -> None:
+    """Set a storage value in the LMDB state."""
+    state.db.set_storage(address, key, value)
+
+
+def apply_changes_to_state(state: State, diff: BlockDiff) -> None:
+    """
+    Apply block-level diff to the LMDB state for the next block.
+
+    If ``compute_state_root_and_trie_changes`` already flushed the
+    account and storage changes, only update the code store.
+
+    Parameters
+    ----------
+    state :
+        The LMDB-backed state.
+    diff :
+        Account, storage, and code changes to apply.
+    """
+    state._code_store.update(diff.code_changes)
+    if getattr(state, "_changes_flushed", False):
+        state._changes_flushed = False
+        return
+    _flush_changes(
+        state, diff.account_changes, diff.storage_changes
+    )
+
+
+def _flush_changes(
+    state: State,
+    account_changes: Dict[Address, Optional[Account]],
+    storage_changes: Dict[Address, Dict[Bytes32, U256]],
+) -> None:
+    """Send account and storage changes to the Rust layer."""
+    for address, account in account_changes.items():
+        if account is None:
+            state.db.set_account(address, None)
+            state.db.destroy_storage(address)
+        else:
+            code = state._code_store.get(account.code_hash, b"")
+            state.db.set_account(
+                address,
+                SimpleNamespace(
+                    nonce=account.nonce,
+                    balance=account.balance,
+                    code=code,
+                ),
+            )
+    for address, storage in storage_changes.items():
+        for key, value in storage.items():
+            state.db.set_storage(address, key, value)
+
+
+# -- DB lifecycle (sync-only) ---------------------------------------------
+
+
+def get_metadata(state: State, key: Bytes) -> Optional[Bytes]:
+    """Get a piece of metadata."""
+    return state.db.get_metadata(key)
+
+
+def set_metadata(
+    state: State, key: Bytes, value: Bytes
+) -> None:
+    """Set a piece of metadata."""
+    return state.db.set_metadata(key, value)
+
+
+def begin_db_transaction(state: State) -> None:
+    """
+    Start a database transaction. A transaction is automatically started
+    when a ``State`` is created.
+    """
+    state.db.begin_mutable()
+
+
+def commit_db_transaction(state: State) -> None:
+    """Commit the current database transaction."""
+    state.db.commit_mutable()
+
+
+def rollback_db_transaction(state: State) -> None:
+    """Rollback the current database transaction."""
+    state.db.rollback_mutable()
