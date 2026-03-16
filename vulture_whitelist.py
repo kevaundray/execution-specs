@@ -49,8 +49,8 @@ ethash.generate_dataset
 # src/ethereum/trace.py
 EvmTracer.__call__
 
-# src/ethereum/optimized/state_db.py
-State.rollback_db_transaction
+# src/ethereum_optimized/state_db.py
+State.default_path
 
 # src/ethereum_spec_tools/docc.py
 docc.EthereumDiscover
