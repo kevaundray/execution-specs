@@ -141,10 +141,11 @@ class State:
         an empty list for trie changes (the LMDB backend does not
         surface internal nodes).
 
-        NOTE: This does NOT commit the changes. The caller must call
-        ``commit_db_transaction()`` to persist.
+        Mark the state as already flushed so that
+        ``apply_changes_to_state`` does not re-flush.
         """
         _flush_changes(self, account_changes, storage_changes)
+        self._changes_flushed = True
         return self.db.state_root(), []
 
 
@@ -203,6 +204,9 @@ def apply_changes_to_state(state: State, diff: BlockDiff) -> None:
     """
     Apply block-level diff to the LMDB state for the next block.
 
+    If ``compute_state_root_and_trie_changes`` already flushed the
+    account and storage changes, only update the code store.
+
     Parameters
     ----------
     state :
@@ -211,6 +215,9 @@ def apply_changes_to_state(state: State, diff: BlockDiff) -> None:
         Account, storage, and code changes to apply.
     """
     state._code_store.update(diff.code_changes)
+    if getattr(state, "_changes_flushed", False):
+        state._changes_flushed = False
+        return
     _flush_changes(
         state, diff.account_changes, diff.storage_changes
     )

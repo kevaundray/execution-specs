@@ -1,7 +1,5 @@
 """Tests for the optimized state implementation."""
 
-import sys
-
 import pytest
 from ethereum_types.numeric import U256, Uint
 

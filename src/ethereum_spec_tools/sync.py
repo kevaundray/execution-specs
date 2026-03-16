@@ -807,7 +807,7 @@ class Sync(ForkTracking):
             state = self.module("state").State()
 
         if self._optimized_state_db is not None:
-            self._patch_apply_changes()
+            self._patch_for_optimized_state()
 
         persisted_block: Optional[Uint] = None
         persisted_block_timestamp: Optional[U256] = None
@@ -959,17 +959,41 @@ class Sync(ForkTracking):
         else:
             return getattr(self.module("state"), func_name)(*args)
 
-    def _patch_apply_changes(self) -> None:
+    def _patch_for_optimized_state(self) -> None:
         """
-        Patch ``apply_changes_to_state`` in each fork's state module to
-        use the optimized LMDB implementation.
+        Patch fork modules for the LMDB-backed state.
+
+        Patch ``apply_changes_to_state`` on the ``fork`` module (not
+        ``state``) because ``fork.py`` binds the function at import
+        time via ``from .state import apply_changes_to_state``.
+
+        Wrap ``execute_block`` so that ``block_diff.code_changes`` are
+        injected into ``_code_store`` before root computation (the
+        ``PreState`` protocol does not pass code changes to
+        ``compute_state_root_and_trie_changes``).
         """
         assert self._optimized_state_db is not None
         for fork in self.forks:
-            state_mod = fork.module("state")
-            if hasattr(state_mod, "apply_changes_to_state"):
-                state_mod.apply_changes_to_state = (
+            fork_mod = fork.module("fork")
+            if hasattr(fork_mod, "apply_changes_to_state"):
+                fork_mod.apply_changes_to_state = (
                     self._optimized_state_db.apply_changes_to_state
+                )
+            if hasattr(fork_mod, "extract_block_diff"):
+                original_extract = fork_mod.extract_block_diff
+
+                def make_extract_wrapper(orig: Any) -> Any:
+                    def wrapper(block_state: Any) -> Any:
+                        diff = orig(block_state)
+                        block_state.pre_state._code_store.update(
+                            diff.code_changes
+                        )
+                        return diff
+
+                    return wrapper
+
+                fork_mod.extract_block_diff = make_extract_wrapper(
+                    original_extract
                 )
 
     def process_blocks(self) -> None:
