@@ -743,7 +743,7 @@ class Sync(ForkTracking):
             import ethereum_optimized.state_db as optimized_state_db
 
             ethereum_optimized.monkey_patch(state_path=self.options.persist)
-            self._optimized_state_db = optimized_state_db
+            self._optimized_state_db: Optional[Any] = optimized_state_db
         else:
             self._optimized_state_db = None
             if self.options.persist is not None:

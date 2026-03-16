@@ -12,7 +12,7 @@ Entry point for the Ethereum specification.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from ethereum_rlp import rlp
 from ethereum_types.bytes import Bytes
@@ -154,7 +154,7 @@ class BlockChain:
     """
 
     blocks: List[Block]
-    state: PreState
+    state: Any
     chain_id: U64
 
 
