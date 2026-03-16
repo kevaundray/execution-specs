@@ -8,44 +8,22 @@ Optimized Implementations.
 Introduction
 ------------
 
-This module contains alternative implementations of routines in the spec that
-have been optimized for speed rather than clarity.
+This module contains alternative implementations of routines in the spec
+that have been optimized for speed rather than clarity.
 
-They can be monkey patched in during start up by calling the `monkey_patch()`
-function. This must be done before those modules are imported anywhere.
+The optimized ``State`` class implements the ``PreState`` protocol and
+can be used directly in place of the in-memory trie-based state.
+
+The PoW validation is monkey patched into the fork module for pre-Merge
+forks.
 """
 
 from importlib import import_module
-from typing import Any, Optional, cast
+from typing import Optional
 
 from ethereum_spec_tools.forks import Hardfork
 
 from .fork import get_optimized_pow_patches
-from .state_db import get_optimized_state_patches
-
-
-def monkey_patch_optimized_state_db(
-    fork_name: str, state_path: Optional[str]
-) -> None:
-    """
-    Replace the state interface with one that supports high performance
-    updates and storing state in a database.
-
-    This function must be called before the state interface is imported
-    anywhere.
-    """
-    slow_state = cast(
-        Any,
-        import_module("ethereum.forks." + fork_name + ".state"),
-    )
-
-    optimized_state_db_patches = get_optimized_state_patches(fork_name)
-
-    for name, value in optimized_state_db_patches.items():
-        setattr(slow_state, name, value)
-
-    if state_path is not None:
-        slow_state.State.default_path = state_path
 
 
 def monkey_patch_optimized_spec(fork_name: str) -> None:
@@ -67,12 +45,17 @@ def monkey_patch_optimized_spec(fork_name: str) -> None:
 def monkey_patch(state_path: Optional[str]) -> None:
     """
     Apply all monkey patches to the specification.
+
+    Only PoW validation is monkey-patched. The optimized state is used
+    directly via ``ethereum_optimized.state_db.State``.
     """
+    from .state_db import State
+
+    if state_path is not None:
+        State.default_path = state_path
+
     forks = Hardfork.discover()
 
     for fork in forks:
-        monkey_patch_optimized_state_db(fork.short_name, state_path)
-
-        # Only patch the POW code on POW forks
         if fork.consensus.is_pow():
             monkey_patch_optimized_spec(fork.short_name)
