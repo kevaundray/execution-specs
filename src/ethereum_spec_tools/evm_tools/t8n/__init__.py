@@ -7,13 +7,16 @@ import fnmatch
 import json
 import os
 from contextlib import AbstractContextManager
-from typing import Any, Final, TextIO, Tuple, Type, TypeVar
+from typing import Any, Dict, Final, List, TextIO, Tuple, Type, TypeVar
 
 from ethereum_rlp import rlp
+from ethereum_types.bytes import Bytes32
 from ethereum_types.numeric import U64, U256, Uint
 from typing_extensions import override
 
 from ethereum import trace
+from ethereum.crypto.hash import Hash32
+from ethereum.utils.hexadecimal import hex_to_bytes
 from ethereum.exceptions import EthereumException, InvalidBlock
 from ethereum.fork_criteria import ByBlockNumber, ByTimestamp, Unscheduled
 
@@ -37,6 +40,8 @@ from .env import Env
 from .evm_trace.count import CountTracer
 from .evm_trace.eip3155 import Eip3155Tracer
 from .evm_trace.group import GroupTracer
+from .payload import Payload
+from .payload_status import PayloadStatus
 from .t8n_types import Alloc, Result, Txs
 
 T = TypeVar("T")
@@ -56,6 +61,20 @@ def t8n_arguments(subparsers: argparse._SubParsersAction) -> None:
     )
     t8n_parser.add_argument(
         "--input.txs", dest="input_txs", type=str, default="txs.json"
+    )
+    t8n_parser.add_argument(
+        "--input.payload",
+        dest="input_payload",
+        type=str,
+        default=None,
+        help="Engine API execution payload JSON (enables engine mode)",
+    )
+    t8n_parser.add_argument(
+        "--input.fixture",
+        dest="input_fixture",
+        type=str,
+        default=None,
+        help="blockchain_tests_engine fixture JSON (enables fixture mode)",
     )
     t8n_parser.add_argument(
         "--input.blobParams",
@@ -185,6 +204,8 @@ class T8N(Load):
             options.input_alloc,
             options.input_txs,
             options.blob_parameters,
+            options.input_payload,
+            options.input_fixture,
         ):
             stdin = json.load(in_file)
         else:
@@ -266,12 +287,42 @@ class T8N(Load):
         super().__init__(fork)
 
         self.chain_id = parse_hex_or_int(self.options.state_chainid, U64)
-        self.alloc = Alloc(self, stdin)
-        self.env = Env(self, stdin)
-        self.txs = Txs(self, stdin)
-        self.result = Result(
-            self.env.block_difficulty, self.env.base_fee_per_gas
-        )
+
+        # Detect mode: fixture mode, engine mode, or standard mode
+        self.fixture_mode = options.input_fixture is not None
+        self.engine_mode = options.input_payload is not None and not self.fixture_mode
+
+        if self.fixture_mode:
+            # Fixture mode: load full blockchain_tests_engine fixture
+            from .fixture import EngineFixture
+
+            self.fixture: EngineFixture | None = EngineFixture(self, stdin)
+            # Create empty state directly, then load pre-state from fixture
+            self._state = self.fork.State()
+            self._load_fixture_pre_state()
+            self.payload = None
+            self.env = None  # type: ignore[assignment]
+            self.txs = None  # type: ignore[assignment]
+            self.result = None  # type: ignore[assignment]
+        elif self.engine_mode:
+            # Engine mode: validate execution payload instead of transactions
+            self.alloc = Alloc(self, stdin)
+            self.fixture = None
+            self.payload: Payload | None = Payload(self, stdin)
+            # env and txs are not needed in engine mode
+            self.env = None  # type: ignore[assignment]
+            self.txs = None  # type: ignore[assignment]
+            self.result = None  # type: ignore[assignment]
+        else:
+            # Standard mode: process transactions
+            self.alloc = Alloc(self, stdin)
+            self.fixture = None
+            self.payload = None
+            self.env = Env(self, stdin)
+            self.txs = Txs(self, stdin)
+            self.result = Result(
+                self.env.block_difficulty, self.env.base_fee_per_gas
+            )
 
     def _tracer(self, type_: Type[T]) -> T:
         group = self.tracers
@@ -466,6 +517,84 @@ class T8N(Load):
                 block_gas_limit=block_env.block_gas_limit,
             )
 
+    def _load_fixture_pre_state(self) -> None:
+        """Load pre-state from fixture into state."""
+        assert self.fixture is not None
+
+        for address_hex, account_data in self.fixture.pre_state.items():
+            address = self.fork.hex_to_address(address_hex)
+
+            nonce = parse_hex_or_int(account_data.get("nonce", "0x0"), Uint)
+            balance = parse_hex_or_int(account_data.get("balance", "0x0"), U256)
+            code = hex_to_bytes(account_data.get("code", "0x"))
+
+            account = self.fork.Account(
+                nonce=nonce,
+                balance=balance,
+                code=code,
+            )
+            self.fork.set_account(self._state, address, account)
+
+            # Set storage
+            storage = account_data.get("storage", {})
+            for slot_hex, value_hex in storage.items():
+                slot = parse_hex_or_int(slot_hex, U256)
+                value = parse_hex_or_int(value_hex, U256)
+                if int(value) != 0:
+                    self.fork.set_storage(self._state, address, slot, value)
+
+    def run_engine_validation(self) -> PayloadStatus:
+        """
+        Validate an Engine API execution payload.
+
+        Returns PayloadStatus indicating VALID or INVALID with error details.
+        """
+        assert self.payload is not None
+
+        # Create the ExecutionPayload for this fork
+        execution_payload = self.payload.to_execution_payload(self.fork)
+
+        # Build the NewPayloadRequest
+        # V3+ requests require additional parameters
+        NewPayloadRequest = self.fork.NewPayloadRequest
+        if self.fork.has_beacon_roots_address:
+            # V3+ request with blob hashes and parent beacon root
+            from ethereum_types.bytes import Bytes32
+
+            blob_hashes = self.payload.blob_versioned_hashes or ()
+            parent_beacon_root = (
+                self.payload.parent_beacon_block_root
+                if self.payload.parent_beacon_block_root is not None
+                else Bytes32(bytes(32))
+            )
+            request = NewPayloadRequest(
+                payload=execution_payload,
+                expected_blob_versioned_hashes=blob_hashes,
+                parent_beacon_block_root=parent_beacon_root,
+            )
+        else:
+            # V1/V2 request
+            request = NewPayloadRequest(payload=execution_payload)
+
+        # Call validate_execution_payload
+        result = self.fork.validate_execution_payload(
+            request=request,
+            parent_header=None,  # Placeholder
+            state=self.alloc.state,
+            chain_id=self.chain_id,
+            block_hashes=[],  # Placeholder
+        )
+
+        # Check if result is Valid or ValidationError
+        if isinstance(result, self.fork.Valid):
+            return PayloadStatus.valid(self.payload.block_hash)
+        else:
+            # ValidationError
+            return PayloadStatus.invalid(
+                str(result),
+                latest_valid_hash=self.payload.parent_hash,
+            )
+
     def run_blockchain_test(self) -> None:
         """
         Apply a block on the pre-state. Also includes system operations.
@@ -483,6 +612,215 @@ class T8N(Load):
 
     def run(self) -> int:
         """Run the transition and provide the relevant outputs."""
+        # Handle fixture mode
+        if self.fixture_mode:
+            return self._run_fixture_mode()
+
+        # Handle engine mode
+        if self.engine_mode:
+            return self._run_engine_mode()
+
+        return self._run_standard_mode()
+
+    def _run_fixture_mode(self) -> int:
+        """Run fixture mode: validate payloads from blockchain_tests_engine fixture."""
+        assert self.fixture is not None
+
+        results = []
+        parent_header = self.fixture.get_parent_header(self.fork)
+        block_hashes = [self.fixture.get_genesis_hash()]
+
+        for i in range(self.fixture.get_payload_count()):
+            payload_data, extra_params = self.fixture.get_payload_data(i)
+
+            try:
+                status = self._validate_fixture_payload(
+                    payload_data, extra_params, parent_header, block_hashes
+                )
+                results.append({
+                    "index": i,
+                    "status": status.status,
+                    "latestValidHash": (
+                        "0x" + status.latest_valid_hash.hex()
+                        if status.latest_valid_hash
+                        else None
+                    ),
+                    "validationError": status.validation_error,
+                })
+
+                # If valid, update parent header for next payload
+                if status.status == "VALID" and status.latest_valid_hash:
+                    block_hashes.append(status.latest_valid_hash)
+                    # TODO: update parent_header for chained validation
+
+            except Exception as e:
+                results.append({
+                    "index": i,
+                    "status": "INVALID",
+                    "latestValidHash": None,
+                    "validationError": str(e),
+                })
+
+        # Build output
+        output = {
+            "testName": self.fixture.test_name,
+            "network": self.fixture.network,
+            "payloadCount": self.fixture.get_payload_count(),
+            "results": results,
+        }
+
+        # Check overall success
+        all_valid = all(r["status"] == "VALID" for r in results)
+        output["allValid"] = all_valid
+
+        if self.options.output_result == "stdout":
+            json.dump(output, self.out_file, indent=4)
+        else:
+            result_output_path = os.path.join(
+                self.options.output_basedir,
+                self.options.output_result,
+            )
+            with open(result_output_path, "w") as f:
+                json.dump(output, f, indent=4)
+            self.logger.info(f"Wrote fixture results to {result_output_path}")
+
+        return 0 if all_valid else 1
+
+    def _validate_fixture_payload(
+        self,
+        payload_data: Dict[str, Any],
+        extra_params: List[Any],
+        parent_header: Any,
+        block_hashes: List[Hash32],
+    ) -> PayloadStatus:
+        """Validate a single payload from a fixture."""
+        from .payload import Payload
+
+        # Create a temporary Payload-like object from the fixture data
+        # We need to build the ExecutionPayload and NewPayloadRequest
+
+        # Parse withdrawals if present
+        withdrawals_data = payload_data.get("withdrawals", [])
+        withdrawals = tuple()
+        if self.fork.has_withdrawal and withdrawals_data:
+            withdrawals = tuple(
+                self.fork.Withdrawal(
+                    index=parse_hex_or_int(w["index"], Uint),
+                    validator_index=parse_hex_or_int(w["validatorIndex"], Uint),
+                    address=self.fork.hex_to_address(w["address"]),
+                    amount=parse_hex_or_int(w["amount"], Uint),
+                )
+                for w in withdrawals_data
+            )
+
+        # Build ExecutionPayload kwargs
+        kwargs = {
+            "parent_hash": Hash32(hex_to_bytes(payload_data["parentHash"])),
+            "fee_recipient": self.fork.hex_to_address(payload_data["feeRecipient"]),
+            "state_root": self.fork.hex_to_root(payload_data["stateRoot"]),
+            "receipts_root": self.fork.hex_to_root(payload_data["receiptsRoot"]),
+            "logs_bloom": self.fork.Bloom(hex_to_bytes(payload_data["logsBloom"])),
+            "prev_randao": Bytes32(hex_to_bytes(payload_data["prevRandao"])),
+            "block_number": parse_hex_or_int(payload_data["blockNumber"], Uint),
+            "gas_limit": parse_hex_or_int(payload_data["gasLimit"], Uint),
+            "gas_used": parse_hex_or_int(payload_data["gasUsed"], Uint),
+            "timestamp": parse_hex_or_int(payload_data["timestamp"], U256),
+            "extra_data": hex_to_bytes(payload_data["extraData"]),
+            "base_fee_per_gas": parse_hex_or_int(payload_data["baseFeePerGas"], Uint),
+            "block_hash": Hash32(hex_to_bytes(payload_data["blockHash"])),
+            "transactions": tuple(
+                hex_to_bytes(tx) for tx in payload_data.get("transactions", [])
+            ),
+        }
+
+        if self.fork.has_withdrawal:
+            kwargs["withdrawals"] = withdrawals
+
+        if self.fork.has_beacon_roots_address:
+            kwargs["blob_gas_used"] = parse_hex_or_int(
+                payload_data.get("blobGasUsed", "0x0"), U64
+            )
+            kwargs["excess_blob_gas"] = parse_hex_or_int(
+                payload_data.get("excessBlobGas", "0x0"), U64
+            )
+
+        ExecutionPayload = self.fork.ExecutionPayload
+        execution_payload = ExecutionPayload(**kwargs)
+
+        # Build NewPayloadRequest
+        NewPayloadRequest = self.fork.NewPayloadRequest
+        if self.fork.has_beacon_roots_address:
+            # V3+ request
+            blob_hashes: Tuple[Bytes32, ...] = ()
+            parent_beacon_root = Bytes32(bytes(32))
+
+            if extra_params and len(extra_params) > 0 and extra_params[0]:
+                blob_hashes = tuple(
+                    Bytes32(hex_to_bytes(h)) for h in extra_params[0]
+                )
+            if extra_params and len(extra_params) > 1 and extra_params[1]:
+                parent_beacon_root = Bytes32(hex_to_bytes(extra_params[1]))
+
+            request = NewPayloadRequest(
+                payload=execution_payload,
+                expected_blob_versioned_hashes=blob_hashes,
+                parent_beacon_block_root=parent_beacon_root,
+            )
+        else:
+            request = NewPayloadRequest(payload=execution_payload)
+
+        # Call validate_execution_payload with full context
+        result = self.fork.validate_execution_payload(
+            request=request,
+            parent_header=parent_header,
+            state=self._state,
+            chain_id=self.chain_id,
+            block_hashes=block_hashes,
+        )
+
+        block_hash = Hash32(hex_to_bytes(payload_data["blockHash"]))
+        parent_hash = Hash32(hex_to_bytes(payload_data["parentHash"]))
+
+        if isinstance(result, self.fork.Valid):
+            return PayloadStatus.valid(block_hash)
+        else:
+            return PayloadStatus.invalid(str(result), latest_valid_hash=parent_hash)
+
+    def _run_engine_mode(self) -> int:
+        """Run engine mode: validate execution payload."""
+        try:
+            payload_status = self.run_engine_validation()
+        except FatalError as e:
+            self.logger.error(str(e))
+            return 1
+        except Exception as e:
+            # Any unexpected error during validation
+            self.logger.error(f"Engine validation error: {e}")
+            payload_status = PayloadStatus.invalid(
+                str(e),
+                latest_valid_hash=self.payload.parent_hash
+                if self.payload
+                else None,
+            )
+
+        # Output the PayloadStatus JSON
+        json_output = payload_status.to_json()
+
+        if self.options.output_result == "stdout":
+            json.dump({"payloadStatus": json_output}, self.out_file, indent=4)
+        else:
+            result_output_path = os.path.join(
+                self.options.output_basedir,
+                self.options.output_result,
+            )
+            with open(result_output_path, "w") as f:
+                json.dump(json_output, f, indent=4)
+            self.logger.info(f"Wrote payload status to {result_output_path}")
+
+        return 0
+
+    def _run_standard_mode(self) -> int:
+        """Run standard mode: process transactions."""
         # Clear files that may have been created in a previous
         # run of the t8n tool.
         # Define the specific files and pattern to delete
