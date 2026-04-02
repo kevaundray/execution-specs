@@ -1,0 +1,12 @@
+[package]
+name = "evm_rusty"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "evm_rusty"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.24", features = ["extension-module"] }
+ruint = "1"

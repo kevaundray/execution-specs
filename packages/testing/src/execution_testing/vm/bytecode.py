@@ -227,7 +227,7 @@ class Bytecode:
         )
 
         return Bytecode(
-            bytes(self) + bytes(other),
+            self._bytes_ + other._bytes_,
             popped_stack_items=c_pop,
             pushed_stack_items=c_push,
             min_stack_height=c_min,
@@ -256,10 +256,47 @@ class Bytecode:
             raise ValueError("Cannot multiply by a negative number")
         if other == 0:
             return Bytecode()
-        output = self
-        for _ in range(other - 1):
-            output += self
-        return output
+        if other == 1:
+            return Bytecode(self)
+
+        # Build bytes in O(n) using join instead of repeated concatenation
+        self_bytes = bytes(self)
+        result_bytes = self_bytes * other
+
+        # Compute stack metadata for N repetitions:
+        # After one copy: starts at 0, pops a_pop, pushes a_push.
+        # Net per copy = a_push - a_pop.
+        # For N copies the cumulative effect is straightforward.
+        a_pop = self.popped_stack_items
+        a_push = self.pushed_stack_items
+        a_min = self.min_stack_height
+        a_max = self.max_stack_height
+        net = a_push - a_pop
+
+        if net >= 0:
+            # Stack grows or stays same each iteration
+            c_pop = a_pop
+            c_push = a_push + net * (other - 1)
+            c_min = a_min
+            c_max = a_min + a_max - a_min + net * (other - 1)
+        else:
+            # Stack shrinks each iteration — later copies need more initial
+            # stack. The worst minimum is at the last copy.
+            c_pop = a_pop + (-net) * (other - 1)
+            c_push = a_push
+            c_min = a_min + (-net) * (other - 1)
+            c_max = c_min + a_max - a_min
+        c_max = max(c_max, c_min)
+
+        return Bytecode(
+            result_bytes,
+            popped_stack_items=c_pop,
+            pushed_stack_items=c_push,
+            min_stack_height=c_min,
+            max_stack_height=c_max,
+            terminating=self.terminating,
+            opcode_list=self.opcode_list * other,
+        )
 
     def hex(self) -> str:
         """
