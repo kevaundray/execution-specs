@@ -149,12 +149,15 @@ any edge case.
    suite with the backend present and assert produced state roots match the
    expected fixtures. Proves parity on real mainnet-shaped state.
 
-3. **CI job.** New job in `.github/workflows/test.yaml` that installs
-   `[optimized]` (builds the crate via maturin), then runs the property test and
-   json-loader suite with the backend active. **This is the piece missing for
-   `ethereum_optimized` that let it rot.**
+3. **CI job.** The `eth-trie-rs` job in `.github/workflows/test.yaml` builds the
+   crate (`uv pip install -e rust/eth_trie_rs/`), asserts the backend is active
+   (`assert s._eth_trie_rs is not None`), then runs
+   `tests/json_loader/test_rust_state_root.py` (the parity tests) and
+   `tests/json_loader/test_genesis.py` (mainnet genesis integration). **This is
+   the piece missing for `ethereum_optimized` that let it rot.**
 
-4. **Rust-side unit tests** in the crate for marshalling/encoding helpers.
+4. **Rust-side unit tests** in the crate for marshalling/encoding helpers — a
+   possible future addition; none exist today.
 
 ## Packaging, build & repo layout
 

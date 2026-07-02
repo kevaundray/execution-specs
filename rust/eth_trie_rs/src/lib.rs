@@ -67,13 +67,20 @@ fn state_root(
     Ok(PyBytes::new_bound(py, root.as_slice()).unbind())
 }
 
+/// Parse a minimal big-endian byte string into a `u64`.
+///
+/// Ethereum account nonces are capped below 2**64 by EIP-2681, so the spec's
+/// unbounded `Uint` nonce always fits in a `u64`. `nonce.to_be_bytes()` is a
+/// minimal big-endian encoding, so a length above 8 means the value is out of
+/// contract; we panic rather than silently truncate (which would yield a wrong,
+/// consensus-divergent state root).
 fn u64_from_be(bytes: &[u8]) -> u64 {
+    assert!(
+        bytes.len() <= 8,
+        "nonce exceeds u64 (violates EIP-2681 nonce cap)"
+    );
     let mut buf = [0u8; 8];
-    if bytes.is_empty() {
-        return 0;
-    }
-    let take = bytes.len().min(8);
-    buf[8 - take..].copy_from_slice(&bytes[bytes.len() - take..]);
+    buf[8 - bytes.len()..].copy_from_slice(bytes);
     u64::from_be_bytes(buf)
 }
 

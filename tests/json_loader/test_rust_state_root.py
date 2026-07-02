@@ -124,9 +124,10 @@ def test_shim_matches_pure_python(monkeypatch: pytest.MonkeyPatch) -> None:
     accounts = {a: Account(Uint(3), U256(9), EMPTY_CODE_HASH)}
     storage = {a: {Bytes32(b"\x00" * 31 + b"\x07"): U256(123)}}
 
-    fast = python_state_root(accounts, storage)  # backend active (default)
+    backend_root = python_state_root(accounts, storage)  # backend active
 
-    monkeypatch.setattr(st, "_eth_trie_rs", None)  # force fallback
-    slow = python_state_root(accounts, storage)
+    # Setting _eth_trie_rs to None forces the pure-Python fallback path.
+    monkeypatch.setattr(st, "_eth_trie_rs", None)
+    fallback_root = python_state_root(accounts, storage)
 
-    assert fast == slow
+    assert backend_root == fallback_root

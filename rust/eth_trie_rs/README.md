@@ -101,6 +101,8 @@ The FFI boundary trusts its caller — the Python shim in
 assumes: address = 20 bytes, code hash and storage keys = 32 bytes,
 balance/storage values ≤ 32 bytes big-endian, and nonce fits in a `u64`.
 Malformed lengths **panic** (via `B256::from_slice` / `U256::from_be_slice`)
-rather than raising a Python `PyErr`. This is acceptable for the current
+rather than raising a Python `PyErr`. A nonce of 2**64 or greater is likewise
+out of contract (barred by EIP-2681's nonce cap) and will **panic** rather than
+silently truncate. This is acceptable for the current
 internal-only v1 boundary. Hardening these into proper `PyErr` returns is a
 deferred follow-up, to be done before any untrusted caller is exposed.
