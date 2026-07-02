@@ -198,6 +198,9 @@ packages = [
 optimized = [
     "rust-pyspec-glue>=0.0.9,<0.1.0",
     "ethash>=1.1.0,<2",
+    # eth_trie_rs (rust/eth_trie_rs) accelerates state-root computation;
+    # built from source via maturin (`uv pip install -e rust/eth_trie_rs/`).
+    # When published to PyPI: "eth_trie_rs>=0.1.0,<0.2.0".
 ]
 
 [dependency-groups]
