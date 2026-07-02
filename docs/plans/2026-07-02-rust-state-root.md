@@ -44,7 +44,15 @@ per-fork monkey-patch strategy predates the shared-`State` refactor
 - CI test workflow: `.github/workflows/test.yaml`.
 
 **Run a single test:** `uv run pytest <path>::<name> -v`
-**Build the crate into the venv:** `uv run maturin develop -m rust/eth_trie_rs/Cargo.toml`
+**Build the crate into `.venv` (editable):** `uv pip install -e rust/eth_trie_rs/`
+
+> **Build-tool note (verified in this environment):** do NOT use
+> `uv run maturin develop` — `uv run maturin` resolves to a stale global
+> maturin **0.14.13**, incompatible with PyO3 0.22. `uv pip install -e
+> rust/eth_trie_rs/` builds via the modern maturin pinned in the crate's own
+> `[build-system].requires` and installs into `.venv`. Rust toolchain
+> (cargo 1.98) and crates.io access are confirmed working; `alloy-trie 0.7.0`
+> resolves. Re-run the `uv pip install -e` command after any Rust change.
 
 ---
 
@@ -206,7 +214,7 @@ fn eth_trie_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 Run:
 ```
-uv run maturin develop -m rust/eth_trie_rs/Cargo.toml
+uv pip install -e rust/eth_trie_rs/
 uv run pytest tests/json_loader/test_rust_state_root.py::test_empty_state_root -v
 ```
 Expected: PASS.
@@ -480,7 +488,7 @@ optimized = [
 
 Run (build first so `eth_trie_rs` is importable, then a fast subset):
 ```
-uv run maturin develop -m rust/eth_trie_rs/Cargo.toml
+uv pip install -e rust/eth_trie_rs/
 uv run pytest -m "not slow" -k "genesis or state" tests/json_loader -q
 ```
 Expected: PASS — real mainnet-shaped state roots now flow through Rust and still
@@ -521,7 +529,7 @@ active:
       - name: Install deps + build crate
         run: |
           uv sync
-          uv run maturin develop -m rust/eth_trie_rs/Cargo.toml
+          uv pip install -e rust/eth_trie_rs/
       - name: Differential parity tests
         run: uv run pytest tests/json_loader/test_rust_state_root.py -v
       - name: json-loader with backend active
