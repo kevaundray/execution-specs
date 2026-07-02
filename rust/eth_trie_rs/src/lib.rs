@@ -32,6 +32,11 @@ fn state_root(
     accounts: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)>,
     storage: HashMap<Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>>,
 ) -> PyResult<Py<PyBytes>> {
+    // Length contract (callers are trusted — the Python shim in state.py):
+    // addr = 20 bytes, code_hash & storage keys = 32 bytes, balance/storage
+    // values = <=32 bytes big-endian, nonce fits in u64. Malformed lengths
+    // will panic (from_slice/from_be_slice); acceptable for this internal v1
+    // boundary, to be hardened to PyErr before any untrusted caller.
     let mut account_leaves: Vec<(B256, Vec<u8>)> = Vec::with_capacity(accounts.len());
 
     for (addr, nonce, balance, code_hash) in accounts {
