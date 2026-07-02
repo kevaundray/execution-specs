@@ -253,6 +253,11 @@ class State:
             if trie._data == {}:
                 del storage_tries[address]
 
+        # Optional fast path: if the `eth_trie_rs` Rust extension is
+        # installed, delegate root computation to it. This is a performance
+        # optimization only and is NOT part of the specification — the
+        # pure-Python `root(...)` call below is the canonical reference and
+        # must produce an identical root.
         if _eth_trie_rs is not None:
             accounts = [
                 (
@@ -266,9 +271,10 @@ class State:
             ]
             storage = {
                 bytes(addr): [
-                    (bytes(k), v.to_be_bytes()) for k, v in t._data.items()
+                    (bytes(key), value.to_be_bytes())
+                    for key, value in trie._data.items()
                 ]
-                for addr, t in storage_tries.items()
+                for addr, trie in storage_tries.items()
             }
             return Root(_eth_trie_rs.state_root(accounts, storage)), []
 
