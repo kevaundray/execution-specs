@@ -73,6 +73,32 @@ jobs:
           EOF
           uvx --from actionlint-py actionlint
 
+  eth-trie-rs:
+    name: eth_trie_rs state-root parity
+    runs-on: ubuntu-latest
+    needs: static
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+      - name: Ensure SHA pinned actions
+        uses: zgosalvez/github-actions-ensure-sha-pinned-actions@70c4af2ed5282c51ba40566d026d6647852ffa3e # v5.0.1
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: stable
+      - uses: ./.github/actions/setup-uv
+      - name: Sync Python environment
+        run: uv sync
+      - name: Build eth_trie_rs crate
+        run: uv pip install -e rust/eth_trie_rs/
+      - name: Assert Rust backend is active
+        run: uv run python -c "import ethereum.state as s; assert s._eth_trie_rs is not None, 'eth_trie_rs backend failed to build/import'"
+      - name: Run state-root parity tests
+        run: uv run pytest tests/json_loader/test_rust_state_root.py -v
+      - name: Run json-loader genesis integration
+        run: uv run pytest tests/json_loader/test_genesis.py -q
+
   fill:
     name: fill (${{ matrix.label }})
     runs-on: [self-hosted-ghr, size-xl-x64]
