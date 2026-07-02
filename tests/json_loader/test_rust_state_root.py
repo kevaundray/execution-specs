@@ -1,5 +1,7 @@
 """Differential tests: eth_trie_rs state root vs the pure-Python spec."""
 
+import random
+
 import pytest
 
 from ethereum.merkle_patricia_trie import EMPTY_TRIE_ROOT
@@ -75,6 +77,34 @@ def test_accounts_with_storage() -> None:
             Bytes32(b"\xff" * 32): U256(2**200),
         },
     }
+    assert rust_state_root(accounts, storage) == python_state_root(
+        accounts, storage
+    )
+
+
+def _rand_state(rng):
+    accounts, storage = {}, {}
+    n = rng.randint(0, 20)
+    for _ in range(n):
+        addr = Bytes20(bytes(rng.randrange(256) for _ in range(20)))
+        accounts[addr] = Account(
+            Uint(rng.randrange(2**64)),
+            U256(rng.randrange(2**256)),
+            EMPTY_CODE_HASH,
+        )
+        if rng.random() < 0.5:
+            slots = {}
+            for _ in range(rng.randint(1, 8)):
+                key = Bytes32(bytes(rng.randrange(256) for _ in range(32)))
+                slots[key] = U256(rng.randrange(1, 2**256))
+            storage[addr] = slots
+    return accounts, storage
+
+
+@pytest.mark.parametrize("seed", range(50))
+def test_property_differential(seed: int) -> None:
+    rng = random.Random(seed)  # explicit seed -> reproducible
+    accounts, storage = _rand_state(rng)
     assert rust_state_root(accounts, storage) == python_state_root(
         accounts, storage
     )
