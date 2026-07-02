@@ -16,6 +16,7 @@ There is a distinction between an account that does not exist and
 from dataclasses import dataclass, field
 from typing import (
     AbstractSet,
+    Any,
     Dict,
     List,
     Optional,
@@ -42,6 +43,12 @@ from ethereum.merkle_patricia_trie import (
 
 Address = Bytes20
 Root = Hash32
+
+_eth_trie_rs: Optional[Any]
+try:
+    import eth_trie_rs as _eth_trie_rs
+except ImportError:
+    _eth_trie_rs = None
 
 EMPTY_CODE_HASH = keccak256(b"")
 
@@ -245,6 +252,25 @@ class State:
                 trie_set(trie, key, value)
             if trie._data == {}:
                 del storage_tries[address]
+
+        if _eth_trie_rs is not None:
+            accounts = [
+                (
+                    bytes(addr),
+                    account.nonce.to_be_bytes(),
+                    account.balance.to_be_bytes(),
+                    bytes(account.code_hash),
+                )
+                for addr, account in main_trie._data.items()
+                if account is not None
+            ]
+            storage = {
+                bytes(addr): [
+                    (bytes(k), v.to_be_bytes()) for k, v in t._data.items()
+                ]
+                for addr, t in storage_tries.items()
+            }
+            return Root(_eth_trie_rs.state_root(accounts, storage)), []
 
         def get_storage_root(addr: Address) -> Root:
             if addr in storage_tries:

@@ -3,6 +3,8 @@
 import random
 
 import pytest
+from ethereum_types.bytes import Bytes20, Bytes32
+from ethereum_types.numeric import U256, Uint
 
 from ethereum.merkle_patricia_trie import EMPTY_TRIE_ROOT
 from ethereum.state import (
@@ -13,8 +15,6 @@ from ethereum.state import (
     set_storage,
     state_root,
 )
-from ethereum_types.bytes import Bytes20, Bytes32
-from ethereum_types.numeric import U256, Uint
 
 eth_trie_rs = pytest.importorskip("eth_trie_rs")
 
@@ -55,16 +55,19 @@ def rust_state_root(
 
 
 def test_empty_state_root() -> None:
+    """Empty state hashes to the empty trie root."""
     assert eth_trie_rs.state_root([], {}) == bytes(EMPTY_TRIE_ROOT)
 
 
 def test_single_account_no_storage() -> None:
+    """A lone account with no storage matches the Python root."""
     addr = Bytes20(b"\x11" * 20)
     accounts = {addr: Account(Uint(7), U256(1000), EMPTY_CODE_HASH)}
     assert rust_state_root(accounts, {}) == python_state_root(accounts, {})
 
 
 def test_accounts_with_storage() -> None:
+    """Accounts with populated storage tries match the Python root."""
     a1 = Bytes20(b"\x11" * 20)
     a2 = Bytes20(b"\x22" * 20)
     accounts = {
@@ -82,7 +85,9 @@ def test_accounts_with_storage() -> None:
     )
 
 
-def _rand_state(rng):
+def _rand_state(
+    rng: random.Random,
+) -> tuple[dict[Bytes20, Account], dict[Bytes20, dict[Bytes32, U256]]]:
     accounts, storage = {}, {}
     n = rng.randint(0, 20)
     for _ in range(n):
@@ -103,8 +108,25 @@ def _rand_state(rng):
 
 @pytest.mark.parametrize("seed", range(50))
 def test_property_differential(seed: int) -> None:
+    """Random states agree between the Rust and Python roots."""
     rng = random.Random(seed)  # explicit seed -> reproducible
     accounts, storage = _rand_state(rng)
     assert rust_state_root(accounts, storage) == python_state_root(
         accounts, storage
     )
+
+
+def test_shim_matches_pure_python(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Rust fast path and pure-Python fallback yield equal roots."""
+    import ethereum.state as st
+
+    a = Bytes20(b"\x33" * 20)
+    accounts = {a: Account(Uint(3), U256(9), EMPTY_CODE_HASH)}
+    storage = {a: {Bytes32(b"\x00" * 31 + b"\x07"): U256(123)}}
+
+    fast = python_state_root(accounts, storage)  # backend active (default)
+
+    monkeypatch.setattr(st, "_eth_trie_rs", None)  # force fallback
+    slow = python_state_root(accounts, storage)
+
+    assert fast == slow
