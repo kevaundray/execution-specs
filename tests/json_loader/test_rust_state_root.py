@@ -60,3 +60,21 @@ def test_single_account_no_storage() -> None:
     addr = Bytes20(b"\x11" * 20)
     accounts = {addr: Account(Uint(7), U256(1000), EMPTY_CODE_HASH)}
     assert rust_state_root(accounts, {}) == python_state_root(accounts, {})
+
+
+def test_accounts_with_storage() -> None:
+    a1 = Bytes20(b"\x11" * 20)
+    a2 = Bytes20(b"\x22" * 20)
+    accounts = {
+        a1: Account(Uint(1), U256(5), EMPTY_CODE_HASH),
+        a2: Account(Uint(0), U256(0), EMPTY_CODE_HASH),
+    }
+    storage = {
+        a1: {
+            Bytes32(b"\x00" * 31 + b"\x01"): U256(42),
+            Bytes32(b"\xff" * 32): U256(2**200),
+        },
+    }
+    assert rust_state_root(accounts, storage) == python_state_root(
+        accounts, storage
+    )
