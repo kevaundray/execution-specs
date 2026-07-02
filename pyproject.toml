@@ -480,6 +480,9 @@ skip = [
     "tmp",
     "*.coverage*",
     "uv.lock",
+    # Rust crate build artifacts (gitignored, present after a local build)
+    "rust/*/target",
+    "*.lock",
 ]
 ignore-words = "whitelist.txt"  # Custom whitelist file
 count = true                    # Display counts of errors

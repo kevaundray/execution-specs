@@ -323,6 +323,7 @@ copytree
 cp
 CPUs
 CPython
+crate
 create
 create2
 create3
@@ -808,6 +809,7 @@ mstore8
 mul
 mulmod
 mult
+mut
 mutable256
 mypy
 
