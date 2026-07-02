@@ -1,7 +1,7 @@
 # Rust-accelerated state root computation — design
 
-**Status:** Design approved, pending implementation
-**Date:** 2026-07-02
+**Status:** Implemented
+**Date:** 2026-07-02 (design) / 2026-07-03 (implemented)
 
 ## Goal
 
@@ -184,11 +184,18 @@ rust/eth_trie_rs/
 - **`ethereum_optimized`:** left untouched — this is a separate parallel fast
   path. Whether to formally deprecate it is a later decision.
 
-## Open items for implementation
+## Open items for implementation — resolved
 
-- Confirm exact `alloy-trie` API for feeding secured key/value pairs and the
-  `TrieAccount` encoding path (`HashBuilder` vs a higher-level helper).
-- Confirm the spec's `encode_node` RLP encoding of a storage `U256` value
-  matches what we feed alloy for storage leaves.
-- Decide whether the `[optimized]` extra should also drop the stale
-  `rust-pyspec-glue`/`ethash` entries or keep them alongside.
+- **alloy-trie API confirmed** (via `alloy-trie` 0.7.4): secured key/value pairs
+  are fed to `HashBuilder::add_leaf(Nibbles::unpack(keccak256(key)), &value)` in
+  sorted-by-hashed-key order; the account leaf is the derived `RlpEncodable`
+  `[nonce, balance, storage_root, code_hash]`. `alloy-primitives`/`alloy-rlp`
+  pinned exactly alongside `alloy-trie`.
+- **Storage `U256` RLP confirmed** to match the spec: the differential + 50-seed
+  property tests in `tests/json_loader/test_rust_state_root.py` pass, proving
+  byte-identical roots including populated storage tries.
+- **`[optimized]` extra:** kept the existing `rust-pyspec-glue`/`ethash` entries
+  (they cover the separate PoW/legacy path, out of scope here) and documented
+  `eth_trie_rs` as a comment there (built from source via
+  `uv pip install -e rust/eth_trie_rs/`; PyPI dependency line noted for when it
+  is published).
