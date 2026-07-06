@@ -819,6 +819,11 @@ wheels = [
 ]
 
 [[package]]
+name = "eth-trie-rs"
+version = "0.1.0"
+source = { editable = "rust/eth_trie_rs" }
+
+[[package]]
 name = "eth-typing"
 version = "5.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -967,6 +972,9 @@ mkdocs = [
     { name = "pillow" },
     { name = "pyspelling" },
 ]
+optimized = [
+    { name = "eth-trie-rs" },
+]
 test = [
     { name = "ethereum-execution-testing" },
     { name = "filelock" },
@@ -1075,6 +1083,7 @@ mkdocs = [
     { name = "pillow", specifier = ">=12,<13" },
     { name = "pyspelling", specifier = ">=2.8.2,<3" },
 ]
+optimized = [{ name = "eth-trie-rs", editable = "rust/eth_trie_rs" }]
 test = [
     { name = "ethereum-execution-testing", editable = "packages/testing" },
     { name = "filelock", specifier = ">=3.15.1,<4" },

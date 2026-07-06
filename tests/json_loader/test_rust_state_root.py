@@ -1,11 +1,13 @@
 """Differential tests: eth_trie_rs state root vs the pure-Python spec."""
 
 import random
+from unittest import mock
 
 import pytest
 from ethereum_types.bytes import Bytes20, Bytes32
 from ethereum_types.numeric import U256, Uint
 
+import ethereum.state
 from ethereum.merkle_patricia_trie import EMPTY_TRIE_ROOT
 from ethereum.state import (
     EMPTY_CODE_HASH,
@@ -19,18 +21,31 @@ from ethereum.state import (
 eth_trie_rs = pytest.importorskip("eth_trie_rs")
 
 
-def python_state_root(
+def _build_state(
     accounts: dict[Bytes20, Account],
     storage: dict[Bytes20, dict[Bytes32, U256]],
-) -> bytes:
-    """Reference root via the spec's ``State``, for a dict-based snapshot."""
+) -> State:
+    """Build a ``State`` from a dict-based snapshot."""
     state = State()
     for addr, acct in accounts.items():
         set_account(state, addr, acct)
     for addr, slots in storage.items():
         for slot, value in slots.items():
             set_storage(state, addr, slot, value)
-    return bytes(state_root(state))
+    return state
+
+
+def python_state_root(
+    accounts: dict[Bytes20, Account],
+    storage: dict[Bytes20, dict[Bytes32, U256]],
+) -> bytes:
+    """Reference root via the pure-Python spec, for a dict-based snapshot."""
+    state = _build_state(accounts, storage)
+    # Disable the Rust fast path so this reference root really is computed
+    # by the pure-Python spec — otherwise the differential tests would
+    # compare Rust against Rust.
+    with mock.patch.object(ethereum.state, "_rust_state_root", None):
+        return bytes(state_root(state))
 
 
 def rust_state_root(
@@ -116,18 +131,38 @@ def test_property_differential(seed: int) -> None:
     )
 
 
-def test_shim_matches_pure_python(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The Rust fast path and pure-Python fallback yield equal roots."""
-    import ethereum.state as st
+def test_nonce_overflow_raises_catchable_error() -> None:
+    """A nonce that exceeds ``u64`` raises a catchable ``OverflowError``."""
+    addr = Bytes20(b"\x11" * 20)
+    accounts = [
+        (
+            bytes(addr),
+            Uint(2**64).to_be_bytes(),
+            U256(0).to_be_bytes(),
+            bytes(EMPTY_CODE_HASH),
+        )
+    ]
+    with pytest.raises(OverflowError):
+        eth_trie_rs.state_root(accounts, {})
 
+
+def test_nonce_overflow_falls_back_to_python() -> None:
+    """``state_root`` falls back to pure Python when a nonce exceeds u64."""
+    addr = Bytes20(b"\x11" * 20)
+    accounts = {addr: Account(Uint(2**64), U256(1), EMPTY_CODE_HASH)}
+
+    state = _build_state(accounts, {})
+
+    assert bytes(state_root(state)) == python_state_root(accounts, {})
+
+
+def test_shim_matches_pure_python() -> None:
+    """The Rust fast path inside ``State`` matches the pure-Python root."""
     a = Bytes20(b"\x33" * 20)
     accounts = {a: Account(Uint(3), U256(9), EMPTY_CODE_HASH)}
     storage = {a: {Bytes32(b"\x00" * 31 + b"\x07"): U256(123)}}
 
-    backend_root = python_state_root(accounts, storage)  # backend active
+    assert ethereum.state._rust_state_root is not None  # backend active
+    backend_root = bytes(state_root(_build_state(accounts, storage)))
 
-    # Setting _eth_trie_rs to None forces the pure-Python fallback path.
-    monkeypatch.setattr(st, "_eth_trie_rs", None)
-    fallback_root = python_state_root(accounts, storage)
-
-    assert backend_root == fallback_root
+    assert backend_root == python_state_root(accounts, storage)

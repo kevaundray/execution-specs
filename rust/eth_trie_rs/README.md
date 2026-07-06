@@ -53,19 +53,30 @@ The account leaf value is `alloy_trie::TrieAccount`-style RLP of
 
 ## Build / install
 
+From a checkout of the main repo, the crate is wired into the opt-in
+`optimized` dependency-group. Build and install it from source with:
+
 ```
-uv pip install -e rust/eth_trie_rs/
+uv sync --group optimized
 ```
+
+This uses the `[tool.uv.sources]` path entry in the top-level
+`pyproject.toml` to build this crate (via its maturin backend) as an
+editable install, and records it in `uv.lock` so it survives future
+`uv sync --group optimized` runs. A stable Rust toolchain is required.
+
+> The group is deliberately **not** part of the default `dev` group or the
+> `[optimized]` extra, so a bare `uv sync` (and `uv sync --all-extras`) stay
+> pure-Python and need no Rust toolchain. To make the group your local
+> default, set `UV_DEFAULT_GROUPS=dev,optimized` or a local `uv.toml`.
 
 > Do **not** use `uv run maturin develop` — in this repo that resolves a stale
-> maturin 0.14, which will not build the crate. `uv pip install -e` uses the
-> maturin build backend declared in this crate's `pyproject.toml` correctly.
+> maturin 0.14, which will not build the crate.
 
-The crate is listed (as a documented comment) under the `[optimized]` extra in
-the top-level `pyproject.toml`; installing it makes the fast path activate
-automatically via the `try: import eth_trie_rs` guard in
-`src/ethereum/state.py`. If the module is not importable, that guard sets the
-backend to `None` and the pure-Python reference runs.
+Installing the crate makes the fast path activate automatically via the
+`try: from eth_trie_rs import state_root` guard in `src/ethereum/state.py`.
+If the module is not importable, that guard sets the backend to `None` and
+the pure-Python reference runs.
 
 ## Dependency pins (consensus-critical)
 
@@ -98,11 +109,16 @@ divergence (including from a dependency bump) fails CI.
 
 The FFI boundary trusts its caller — the Python shim in
 `src/ethereum/state.py`, which always marshals well-formed inputs. The crate
-assumes: address = 20 bytes, code hash and storage keys = 32 bytes,
-balance/storage values ≤ 32 bytes big-endian, and nonce fits in a `u64`.
-Malformed lengths **panic** (via `B256::from_slice` / `U256::from_be_slice`)
-rather than raising a Python `PyErr`. A nonce of 2**64 or greater is likewise
-out of contract (barred by EIP-2681's nonce cap) and will **panic** rather than
-silently truncate. This is acceptable for the current
-internal-only v1 boundary. Hardening these into proper `PyErr` returns is a
-deferred follow-up, to be done before any untrusted caller is exposed.
+assumes: address = 20 bytes, code hash and storage keys = 32 bytes, and
+balance/storage values ≤ 32 bytes big-endian. Malformed lengths **panic**
+(via `B256::from_slice` / `U256::from_be_slice`) rather than raising a
+Python `PyErr`. This is acceptable for the current internal-only v1
+boundary. Hardening these into proper `PyErr` returns is a deferred
+follow-up, to be done before any untrusted caller is exposed.
+
+A nonce of 2**64 or greater is the exception: although EIP-2681 caps nonces
+below 2**64, pre-EIP-2681 forks enforce no cap and the spec's `Uint` nonce
+is unbounded, so oversized nonces are reachable from valid states. The crate
+raises a catchable `OverflowError` (never a silent truncation, which would
+yield a consensus-divergent root) and the Python shim falls back to the
+pure-Python reference, so behavior matches the spec for every input.

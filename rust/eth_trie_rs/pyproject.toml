@@ -9,3 +9,4 @@ requires-python = ">=3.11"
 
 [tool.maturin]
 module-name = "eth_trie_rs"
+profile = "release"

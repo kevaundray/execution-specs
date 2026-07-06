@@ -261,6 +261,14 @@ dev = [
     "ethereum-execution[optimized]",
     "psutil>=7.2.2",
 ]
+# Opt-in only (deliberately NOT in `dev` and NOT in the `[optimized]`
+# extra, so a bare `uv sync` and `uv sync --all-extras` stay pure-Python
+# and need no Rust toolchain). `uv sync --group optimized` builds the
+# in-tree `eth_trie_rs` crate from source via the `[tool.uv.sources]`
+# path below. Requires a stable Rust toolchain.
+optimized = [
+    "eth-trie-rs",
+]
 
 [tool.setuptools.dynamic]
 version = { attr = "ethereum.__version__" }
@@ -479,9 +487,11 @@ skip = [
     "fixtures.*",
     "tmp",
     "*.coverage*",
-    "uv.lock",
-    # Rust crate build artifacts (gitignored, present after a local build)
-    "rust/*/target",
+    # Rust build artifacts (gitignored) and sources (whose keywords
+    # trip codespell)
+    "./rust/*/target",
+    "*.rs",
+    # All lock files (uv.lock, Cargo.lock)
     "*.lock",
 ]
 ignore-words = "whitelist.txt"  # Custom whitelist file
@@ -541,3 +551,8 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 ethereum-execution-testing = { workspace = true }
+# Build the state-root accelerator from the in-tree crate for local dev.
+# Only pulled in by the opt-in `optimized` dependency-group; ignored by a
+# bare `uv sync`. Downstream `pip install` ignores [tool.uv.sources] and
+# would resolve `eth-trie-rs` from PyPI once it is published.
+eth-trie-rs = { path = "rust/eth_trie_rs", editable = true }

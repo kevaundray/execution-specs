@@ -87,13 +87,15 @@ jobs:
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: rust/eth_trie_rs
       - uses: ./.github/actions/setup-uv
-      - name: Sync Python environment
-        run: uv sync
-      - name: Build eth_trie_rs crate
-        run: uv pip install -e rust/eth_trie_rs/
+      - name: Sync Python environment and build eth_trie_rs crate
+        run: uv sync --group optimized
       - name: Assert Rust backend is active
-        run: uv run python -c "import ethereum.state as s; assert s._eth_trie_rs is not None, 'eth_trie_rs backend failed to build/import'"
+        run: uv run python -c "import ethereum.state as s; assert s._rust_state_root is not None, 'eth_trie_rs backend failed to build/import'"
       - name: Run state-root parity tests
         run: uv run pytest tests/json_loader/test_rust_state_root.py -v
       - name: Run json-loader genesis integration
@@ -130,6 +132,10 @@ jobs:
         with:
           python-version: "3.14"
       - uses: ./.github/actions/setup-env
+      - name: Build eth_trie_rs into the env (Rust state-root fast path)
+        run: uv sync --group optimized
+      - name: Assert Rust backend is active
+        run: uv run python -c "import ethereum.state as s; assert s._rust_state_root is not None, 'eth_trie_rs backend failed to build/import'"
       - name: Run fill (${{ matrix.label }})
         run: just fill --from ${{ matrix.from_fork }} --until ${{ matrix.until_fork }}
         env:
@@ -169,6 +175,10 @@ jobs:
         with:
           python-version: "3.14"
       - uses: ./.github/actions/setup-env
+      - name: Build eth_trie_rs into the env (Rust state-root fast path)
+        run: uv sync --group optimized
+      - name: Assert Rust backend is active
+        run: uv run python -c "import ethereum.state as s; assert s._rust_state_root is not None, 'eth_trie_rs backend failed to build/import'"
       - name: Fill and run json-loader tests
         run: just json-loader
         env:

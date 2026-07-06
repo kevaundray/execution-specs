@@ -16,7 +16,7 @@ There is a distinction between an account that does not exist and
 from dataclasses import dataclass, field
 from typing import (
     AbstractSet,
-    Any,
+    Callable,
     Dict,
     List,
     Optional,
@@ -44,11 +44,24 @@ from ethereum.merkle_patricia_trie import (
 Address = Bytes20
 Root = Hash32
 
-_eth_trie_rs: Optional[Any]
+_RustStateRoot = Callable[
+    [
+        List[Tuple[bytes, bytes, bytes, bytes]],
+        Dict[bytes, List[Tuple[bytes, bytes]]],
+    ],
+    bytes,
+]
+"""
+Signature of ``eth_trie_rs.state_root``: accounts are ``(address, nonce,
+balance, code_hash)`` tuples and storage maps address to ``(key, value)``
+pairs, with all numbers as minimal big-endian bytes.
+"""
+
+_rust_state_root: Optional[_RustStateRoot]
 try:
-    import eth_trie_rs as _eth_trie_rs
+    from eth_trie_rs import state_root as _rust_state_root
 except ImportError:
-    _eth_trie_rs = None
+    _rust_state_root = None
 
 EMPTY_CODE_HASH = keccak256(b"")
 
@@ -258,17 +271,18 @@ class State:
         # optimization only and is NOT part of the specification — the
         # pure-Python `root(...)` call below is the canonical reference and
         # must produce an identical root.
-        if _eth_trie_rs is not None:
-            accounts = [
-                (
-                    bytes(addr),
-                    account.nonce.to_be_bytes(),
-                    account.balance.to_be_bytes(),
-                    bytes(account.code_hash),
+        if _rust_state_root is not None:
+            accounts: List[Tuple[bytes, bytes, bytes, bytes]] = []
+            for addr, account in main_trie._data.items():
+                assert account is not None, "cannot encode `None`"
+                accounts.append(
+                    (
+                        bytes(addr),
+                        account.nonce.to_be_bytes(),
+                        account.balance.to_be_bytes(),
+                        bytes(account.code_hash),
+                    )
                 )
-                for addr, account in main_trie._data.items()
-                if account is not None
-            ]
             storage = {
                 bytes(addr): [
                     (bytes(key), value.to_be_bytes())
@@ -276,7 +290,13 @@ class State:
                 ]
                 for addr, trie in storage_tries.items()
             }
-            return Root(_eth_trie_rs.state_root(accounts, storage)), []
+            try:
+                return Root(_rust_state_root(accounts, storage)), []
+            except OverflowError:
+                # A nonce >= 2**64 does not fit the extension's u64
+                # (reachable pre-EIP-2681 and in hand-crafted states);
+                # fall back to the pure-Python reference below.
+                pass
 
         def get_storage_root(addr: Address) -> Root:
             if addr in storage_tries:
