@@ -6,13 +6,16 @@ defined in [`ethereum.binary_trie.trie`], which also holds contract
 code. This module defines how accounts, storage slots, and code
 chunks are assigned keys and packed into values.
 
-The high bits of every stem are a **zone** identifier that labels the
-category of state the stem holds. Account headers live in
+The first byte of every key is a **zone** identifier that labels the
+category of state the key holds. Account headers live in
 [`ACCOUNT_ZONE`], content-addressed overflow code in [`CODE_ZONE`],
-and storage takes every stem with the high bit set. Data accessed
-together is co-located in one stem to reduce branch openings: the
-account header stem holds an account's basic data, code hash, first
-storage slots, and first code chunks.
+and overflow storage in [`STORAGE_ZONE`]. Keys are variable length —
+a zone byte, one or two full 32-byte digests, and a final sub-index
+byte — so digests are used untruncated, and every key of a zone has
+the same length, keeping stems prefix-free as the tree requires.
+Data accessed together is co-located in one stem to reduce branch
+openings: the account header stem holds an account's basic data,
+code hash, first storage slots, and first code chunks.
 
 State is embedded into the key space through the derivation functions
 [`get_tree_key_for_basic_data`], [`get_tree_key_for_code_hash`],
@@ -24,6 +27,7 @@ account's scalar fields packed into one leaf by [`encode_basic_data`].
 [`ethereum.binary_trie.trie`]: ref:ethereum.binary_trie.trie
 [`ACCOUNT_ZONE`]: ref:ethereum.binary_trie.embedding.ACCOUNT_ZONE
 [`CODE_ZONE`]: ref:ethereum.binary_trie.embedding.CODE_ZONE
+[`STORAGE_ZONE`]: ref:ethereum.binary_trie.embedding.STORAGE_ZONE
 [`chunkify_code`]: ref:ethereum.binary_trie.embedding.chunkify_code
 [`encode_basic_data`]: ref:ethereum.binary_trie.embedding.encode_basic_data
 [`get_tree_key_for_basic_data`]: ref:ethereum.binary_trie.embedding.get_tree_key_for_basic_data
@@ -40,7 +44,24 @@ from ethereum_types.numeric import U256, Uint
 from ethereum.crypto.hash import Hash32, keccak256
 from ethereum.utils.byte import left_pad_zero_bytes
 
-from .trie import bit_list_to_bytes, blake3_hash, bytes_to_bit_list
+from .trie import Key, Stem, blake3_hash
+
+Zone = Uint
+"""
+One-byte identifier labeling the category of state a key holds,
+prepended as the first byte of every [`Stem`].
+
+Defined zones are [`ACCOUNT_ZONE`], [`CODE_ZONE`], and
+[`STORAGE_ZONE`]; the remaining values are reserved for future state
+categories. Because the tree consumes key bits most significant
+first, every zone is a subtree rooted eight levels below the tree's
+root.
+
+[`Stem`]: ref:ethereum.binary_trie.trie.Stem
+[`ACCOUNT_ZONE`]: ref:ethereum.binary_trie.embedding.ACCOUNT_ZONE
+[`CODE_ZONE`]: ref:ethereum.binary_trie.embedding.CODE_ZONE
+[`STORAGE_ZONE`]: ref:ethereum.binary_trie.embedding.STORAGE_ZONE
+"""
 
 Address32 = Bytes32
 """
@@ -105,42 +126,49 @@ STEM_SUBTREE_WIDTH = Uint(256)
 Number of values grouped under a single stem.
 """
 
-ZONE_BITS = Uint(4)
+ACCOUNT_ZONE = Zone(0)
 """
-Number of high stem bits taken by the zone identifier.
-"""
-
-ACCOUNT_ZONE = Uint(0)
-"""
-Zone identifier of account header stems.
+Zone byte of account header stems.
 """
 
-CODE_ZONE = Uint(1)
+CODE_ZONE = Zone(1)
 """
-Zone identifier of content-addressed overflow code stems.
-"""
-
-STORAGE_ZONE_BIT = Bytes(b"\x01")
-"""
-The storage zone marker as a single `1` bit in bit-list form (one bit
-per byte), rooting every storage stem in the upper half of the tree.
-
-Storage is labeled by one bit rather than a 4-bit zone because it is
-the largest and most frequently proven state category: the single bit
-gives it the shallowest branch point and leaves the most stem bits
-for hash-derived material.
+Zone byte of content-addressed overflow code stems.
 """
 
-STORAGE_ADDR_PREFIX_BITS = Uint(60)
+STORAGE_ZONE = Zone(255)
 """
-Number of address-hash bits following the storage zone bit in a
-storage stem, bucketing one account's storage at depth 61.
+Zone byte of overflow storage stems.
+
+Storage sits at the far end of the zone byte, leaving zones `2`
+through `254` reserved for future state categories. Because keys are
+variable length, a zone's one-byte label says nothing about its
+capacity: every zone's key space is unbounded behind its prefix.
 """
 
-STORAGE_SUFFIX_BITS = Uint(187)
+ACCOUNT_KEY_LENGTH = Uint(34)
 """
-Number of stem bits bound to both the address and the tree index in a
-storage stem.
+Length of every account zone key: the zone byte, a full address
+digest, and the sub-index byte.
+
+Prefix-freeness rests on two facts, each enforced separately: within
+a zone, one fixed length makes proper prefixes impossible, and
+across zones, keys already differ in their zone byte. Zones sharing
+a length, as the account and code zones do, is therefore harmless.
+Each derivation function asserts the length of the key it
+constructs.
+"""
+
+CODE_KEY_LENGTH = Uint(34)
+"""
+Length of every code zone key: the zone byte, a full digest of the
+code hash and group index, and the sub-index byte.
+"""
+
+STORAGE_KEY_LENGTH = Uint(66)
+"""
+Length of every storage zone key: the zone byte, two full digests
+binding the account and its group index, and the sub-index byte.
 """
 
 PUSH_OFFSET = Uint(95)
@@ -178,19 +206,16 @@ def key_hash(data: Bytes) -> Hash32:
     return blake3_hash(data)
 
 
-def zone_stem(zone: Uint, digest: Bytes) -> Bytes:
+def zone_stem(zone: Zone, digest: Bytes) -> Stem:
     """
-    Build a 31-byte stem from a 4-bit `zone` identifier followed by
-    the high 244 bits of `digest`.
+    Build a stem from a one-byte `zone` identifier followed by the
+    whole of `digest`.
     """
-    assert zone < Uint(2) ** ZONE_BITS  # assert zone fits within 4-bits
-    zone_byte = bytes([int(zone) << (8 - int(ZONE_BITS))])
-    zone_bits = bytes_to_bit_list(zone_byte)[: int(ZONE_BITS)]
-    digest_bits = bytes_to_bit_list(digest)[: 248 - int(ZONE_BITS)]
-    return bit_list_to_bytes(zone_bits + digest_bits)
+    assert zone < Zone(256)  # The zone identifier is a single byte.
+    return Stem(bytes([int(zone)]) + digest)
 
 
-def get_tree_key_for_header(address: Address32, sub_index: Uint) -> Bytes32:
+def get_tree_key_for_header(address: Address32, sub_index: Uint) -> Key:
     """
     Compute the key of the account header leaf at `sub_index`.
 
@@ -200,45 +225,46 @@ def get_tree_key_for_header(address: Address32, sub_index: Uint) -> Bytes32:
     [`ACCOUNT_ZONE`]: ref:ethereum.binary_trie.embedding.ACCOUNT_ZONE
     """
     stem = zone_stem(ACCOUNT_ZONE, key_hash(address))
-    return Bytes32(stem + bytes([int(sub_index)]))
+    key = Key(stem + bytes([int(sub_index)]))
+    assert len(key) == int(ACCOUNT_KEY_LENGTH)
+    return key
 
 
-def get_tree_key_for_basic_data(address: Address32) -> Bytes32:
+def get_tree_key_for_basic_data(address: Address32) -> Key:
     """
     Compute the key of the account's basic data leaf.
     """
     return get_tree_key_for_header(address, BASIC_DATA_LEAF_KEY)
 
 
-def get_tree_key_for_code_hash(address: Address32) -> Bytes32:
+def get_tree_key_for_code_hash(address: Address32) -> Key:
     """
     Compute the key of the account's code hash leaf.
     """
     return get_tree_key_for_header(address, CODE_HASH_LEAF_KEY)
 
 
-def storage_stem(address: Address32, tree_index: U256) -> Bytes:
+def storage_stem(address: Address32, tree_index: U256) -> Stem:
     """
     Build the stem of an account's overflow storage group at
     `tree_index`.
 
-    The stem is the storage zone bit, a 60-bit address prefix that
-    buckets the account's storage at depth 61, and a 187-bit suffix
-    bound to both the address and `tree_index`.
+    The stem carries two full digests after the zone byte:
+    `key_hash(address)`, which gathers all of an account's overflow
+    storage under one subtree — the unit that expiry and sync schemes
+    operate on — and `key_hash(address ‖ tree_index)`, which spreads
+    the account's groups within that subtree. Binding both digests to
+    the address stops storage keys ground to sit close together from
+    being reused by a different contract.
     """
     prefix = key_hash(address)
     suffix = key_hash(address + tree_index.to_be_bytes32())
-    bit_list = (
-        STORAGE_ZONE_BIT
-        + bytes_to_bit_list(prefix)[: int(STORAGE_ADDR_PREFIX_BITS)]
-        + bytes_to_bit_list(suffix)[: int(STORAGE_SUFFIX_BITS)]
-    )
-    return bit_list_to_bytes(bit_list)
+    return zone_stem(STORAGE_ZONE, prefix + suffix)
 
 
 def get_tree_key_for_storage_slot(
     address: Address32, storage_key: U256
-) -> Bytes32:
+) -> Key:
     """
     Compute the key of a storage slot.
 
@@ -255,12 +281,14 @@ def get_tree_key_for_storage_slot(
         )
     tree_index = storage_key // U256(STEM_SUBTREE_WIDTH)
     sub_index = storage_key % U256(STEM_SUBTREE_WIDTH)
-    return Bytes32(storage_stem(address, tree_index) + bytes([int(sub_index)]))
+    key = Key(storage_stem(address, tree_index) + bytes([int(sub_index)]))
+    assert len(key) == int(STORAGE_KEY_LENGTH)
+    return key
 
 
 def get_tree_key_for_code_chunk(
     address: Address32, code_hash: Hash32, chunk_id: Uint
-) -> Bytes32:
+) -> Key:
     """
     Compute the key of a code chunk.
 
@@ -293,7 +321,9 @@ def get_tree_key_for_code_chunk(
     stem = zone_stem(
         CODE_ZONE, key_hash(code_hash + tree_index.to_be_bytes32())
     )
-    return Bytes32(stem + bytes([int(sub_index)]))
+    key = Key(stem + bytes([int(sub_index)]))
+    assert len(key) == int(CODE_KEY_LENGTH)
+    return key
 
 
 def chunkify_code(code: Bytes) -> List[Bytes32]:

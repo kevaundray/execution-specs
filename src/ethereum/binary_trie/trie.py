@@ -2,11 +2,11 @@
 The raw key/value tree underlying the [EIP-8297] Partitioned Binary
 Tree.
 
-The tree maps 32-byte keys to 32-byte values and commits to its entire
-contents with a single root hash. The first 31 bytes of a key are its
-**stem** and the final byte is the sub-index within that stem, so keys
-sharing a stem form one group of values that open together in one
-branch.
+The tree maps variable-length keys to 32-byte values and commits to
+its entire contents with a single root hash. All but the final byte
+of a key are its **stem** and the final byte is the sub-index within
+that stem, so keys sharing a stem form one group of values that open
+together in one branch. Stems must be prefix-free; see [`Stem`].
 
 Unlike the hexary Merkle Patricia Trie it is designed to replace, the
 tree is strictly binary — each key is consumed bit by bit, most
@@ -26,6 +26,7 @@ storage, and code — is mapped into keys and values is defined in
 [`ethereum.binary_trie.embedding`].
 
 [EIP-8297]: https://eips.ethereum.org/EIPS/eip-8297
+[`Stem`]: ref:ethereum.binary_trie.trie.Stem
 [`StemNode`]: ref:ethereum.binary_trie.trie.StemNode
 [`InternalNode`]: ref:ethereum.binary_trie.trie.InternalNode
 [`BinaryTrie`]: ref:ethereum.binary_trie.trie.BinaryTrie
@@ -82,21 +83,38 @@ def bytes_to_bit_list(data: Bytes) -> Bytes:
     return Bytes(bit_list)
 
 
-def bit_list_to_bytes(bit_list: Bytes) -> Bytes:
-    """
-    Pack a sequence of bits, most significant bit first, into bytes.
+Stem = Bytes
+"""
+Every byte of a [`Key`] except the last: the path walked through the
+outer tree, bit by bit, most significant bit first, ending at a
+[`StemNode`].
 
-    The inverse of [`bytes_to_bit_list`]. The length of `bit_list`
-    must be a multiple of eight.
+Stems must be **prefix-free**: no stem may be a prefix of another. A
+key is its path, so a stem prefixing another would place a terminal
+node on the interior of the longer stem's path, leaving the tree
+ill-defined. Key assignment schemes guarantee the property by giving
+every key of a category one fixed length. [`root`] asserts it while
+splitting stems, where a violation surfaces as a stem running out of
+bits before separating from its group.
 
-    [`bytes_to_bit_list`]: ref:ethereum.binary_trie.trie.bytes_to_bit_list
-    """
-    assert len(bit_list) % 8 == 0
-    packed = bytearray(len(bit_list) // 8)
-    for bit_index, bit in enumerate(bit_list):
-        packed[bit_index // 8] |= bit << (7 - bit_index % 8)
-    return Bytes(packed)
+[`Key`]: ref:ethereum.binary_trie.trie.Key
+[`StemNode`]: ref:ethereum.binary_trie.trie.StemNode
+[`root`]: ref:ethereum.binary_trie.trie.root
+"""
 
+Key = Bytes
+"""
+A full tree key: a [`Stem`] followed by one **sub-index** byte
+selecting a value within the stem's group of 256.
+
+The tree requires only that a key is at least two bytes, so a stem of
+one or more bytes plus the sub-index, with stems prefix-free; the
+key lengths actually in use are fixed by
+[`ethereum.binary_trie.embedding`].
+
+[`Stem`]: ref:ethereum.binary_trie.trie.Stem
+[`ethereum.binary_trie.embedding`]: ref:ethereum.binary_trie.embedding
+"""
 
 StemValues = Tuple[
     Optional[Bytes32], ...  # 256 entries, one per sub-index
@@ -117,10 +135,11 @@ class StemNode:
     values whose keys share that stem.
     """
 
-    stem: Bytes
+    stem: Stem
     """
-    First 31 bytes shared by every key committed to by this node; the
-    keys' final bytes index [`values`].
+    Bytes shared by every key committed to by this node: each key of
+    the group shares the same stem except its final byte, which
+    indexes [`values`].
 
     [`values`]: ref:ethereum.binary_trie.trie.StemNode.values
     """
@@ -170,8 +189,8 @@ represented by `None`.
 @dataclass
 class BinaryTrie:
     """
-    Mapping of 32-byte keys to 32-byte values with a single root hash
-    that uniquely identifies its contents.
+    Mapping of variable-length keys to 32-byte values with a single
+    root hash that uniquely identifies its contents.
 
     Only the key/value pairs are stored; [`root`] rebuilds the node
     structure and rehashes it from scratch on every call. Clients are
@@ -180,7 +199,7 @@ class BinaryTrie:
     [`root`]: ref:ethereum.binary_trie.trie.root
     """
 
-    _data: Dict[Bytes32, Bytes32] = field(default_factory=dict)
+    _data: Dict[Key, Bytes32] = field(default_factory=dict)
 
 
 def copy_trie(trie: BinaryTrie) -> BinaryTrie:
@@ -193,16 +212,21 @@ def copy_trie(trie: BinaryTrie) -> BinaryTrie:
     return BinaryTrie(copy.copy(trie._data))
 
 
-def trie_set(trie: BinaryTrie, key: Bytes32, value: Bytes32) -> None:
+def trie_set(trie: BinaryTrie, key: Key, value: Bytes32) -> None:
     """
     Insert or update `key` in `trie` with the given `value`.
+
+    A key is a stem of one or more bytes followed by the sub-index
+    byte. The caller must keep stems prefix-free; see [`Stem`].
+
+    [`Stem`]: ref:ethereum.binary_trie.trie.Stem
     """
-    assert len(key) == 32
+    assert len(key) >= 2
     assert len(value) == 32
     trie._data[key] = value
 
 
-def trie_get(trie: BinaryTrie, key: Bytes32) -> Optional[Bytes32]:
+def trie_get(trie: BinaryTrie, key: Key) -> Optional[Bytes32]:
     """
     Look up `key` in `trie`, returning `None` if absent.
     """
@@ -211,12 +235,21 @@ def trie_get(trie: BinaryTrie, key: Bytes32) -> Optional[Bytes32]:
 
 def merkle_hash(data: Optional[Bytes]) -> Hash32:
     """
-    Hash 32 or 64 bytes of node data, mapping an absent value and the
-    concatenation of two empty subtree hashes to 32 zero bytes.
+    Hash node data, mapping an absent value and the concatenation of
+    two empty subtree hashes to 32 zero bytes.
+
+    Inputs are a 32-byte leaf value, a 64-byte sibling pairing, or a
+    stem node preimage, whose length varies with the stem.
     """
     if data is None or data == b"\x00" * 64:
         return EMPTY_TRIE_ROOT
-    assert len(data) == 64 or len(data) == 32
+    # Valid inputs are 32-byte leaves, 64-byte pairings, or stem
+    # preimages of at least 34 bytes (a one-byte stem, the type byte,
+    # and the 32-byte subtree root), so length 33 is impossible. This
+    # 34 is unrelated to the embedding's ACCOUNT_KEY_LENGTH of 34 (a
+    # full key: 33-byte stem plus sub-index); the numbers coinciding
+    # is an accident, so do not unify them into one constant.
+    assert len(data) == 32 or len(data) >= 34
     return blake3_hash(data)
 
 
@@ -242,7 +275,7 @@ def merkleize(node: Optional[BinaryNode]) -> Hash32:
 
 
 def binarize(
-    stems: Mapping[Bytes, StemValues], depth: Uint
+    stems: Mapping[Stem, StemValues], depth: Uint
 ) -> Optional[BinaryNode]:
     """
     Recursively build the tree for `stems`, starting `depth` bits into
@@ -255,10 +288,13 @@ def binarize(
         (stem,) = stems
         return StemNode(stem, stems[stem])
 
-    assert depth < Uint(248)
-    left: Dict[Bytes, StemValues] = {}
-    right: Dict[Bytes, StemValues] = {}
+    left: Dict[Stem, StemValues] = {}
+    right: Dict[Stem, StemValues] = {}
     for stem, values in stems.items():
+        # A stem running out of bits while still grouped with another
+        # stem means it is a prefix of that stem, which the key
+        # assignment must never produce.
+        assert depth < Uint(8) * Uint(len(stem))
         if bytes_to_bit_list(stem)[depth] == 0:
             left[stem] = values
         else:
@@ -273,12 +309,12 @@ def root(trie: BinaryTrie) -> Hash32:
     """
     Compute the root hash of `trie`.
     """
-    grouped: Dict[Bytes, List[Optional[Bytes32]]] = {}
+    grouped: Dict[Stem, List[Optional[Bytes32]]] = {}
     for key, value in trie._data.items():
-        stem = Bytes(key[:31])
+        stem = Stem(key[:-1])
         if stem not in grouped:
             grouped[stem] = [None] * 256
-        grouped[stem][key[31]] = value
+        grouped[stem][key[-1]] = value
 
     stems = {stem: tuple(values) for stem, values in grouped.items()}
     return merkleize(binarize(stems, Uint(0)))

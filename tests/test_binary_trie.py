@@ -17,7 +17,6 @@ from ethereum_types.bytes import Bytes, Bytes32
 from ethereum.binary_trie.trie import (
     EMPTY_TRIE_ROOT,
     BinaryTrie,
-    bit_list_to_bytes,
     bytes_to_bit_list,
     copy_trie,
     root,
@@ -36,7 +35,7 @@ def reference_hash(data: Optional[bytes]) -> bytes:
     """
     if data is None or data == b"\x00" * 64:
         return b"\x00" * 32
-    assert len(data) in (32, 64)
+    assert len(data) == 32 or len(data) >= 34
     return blake3(data).digest()
 
 
@@ -67,22 +66,6 @@ def test_bytes_to_bit_list_is_msb_first() -> None:
     assert bytes_to_bit_list(Bytes(b"\xa5")) == Bytes(
         bytes([1, 0, 1, 0, 0, 1, 0, 1])
     )
-
-
-def test_bit_list_round_trip() -> None:
-    """
-    Packing the bits of any byte sequence reproduces the sequence.
-    """
-    data = Bytes(bytes(range(256)))
-    assert bit_list_to_bytes(bytes_to_bit_list(data)) == data
-
-
-def test_bit_list_to_bytes_rejects_partial_bytes() -> None:
-    """
-    A bit list whose length is not a multiple of eight is rejected.
-    """
-    with pytest.raises(AssertionError):
-        bit_list_to_bytes(Bytes(bytes([1] * 9)))
 
 
 def test_empty_trie_root_is_all_zeros() -> None:
@@ -230,7 +213,6 @@ class ReferenceBinaryTree:
         """
 
         def __init__(self, stem: bytes) -> None:
-            assert len(stem) == 31
             self.stem = stem
             self.values: List[Optional[bytes]] = [None] * 256
 
@@ -267,10 +249,9 @@ class ReferenceBinaryTree:
         """
         Insert `key` and `value`, splitting stem nodes as needed.
         """
-        assert len(key) == 32
         assert len(value) == 32
-        stem = key[:31]
-        subindex = key[31]
+        stem = key[:-1]
+        subindex = key[-1]
 
         if self.root is None:
             self.root = self.StemNode(stem)
@@ -282,7 +263,7 @@ class ReferenceBinaryTree:
     def _insert(  # type: ignore[no-untyped-def]
         self, node, stem, subindex, value, depth
     ):
-        assert depth < 248
+        assert depth < 8 * len(stem)
 
         if node is None:
             node = self.StemNode(stem)
@@ -418,6 +399,54 @@ def test_root_matches_eip_reference_implementation() -> None:
             trie_set(trie, Bytes32(key), Bytes32(value))
 
         assert root(trie) == reference.merkelize(), f"trial {trial}"
+
+
+def test_root_matches_reference_with_variable_length_keys() -> None:
+    """
+    Keys shaped like the embedding's; 34-byte account and code keys,
+    66-byte storage keys produce the same root in both
+    implementations when mixed in one tree.
+    """
+    rng = random.Random(11832)
+
+    for trial in range(10):
+        entries: Dict[bytes, bytes] = {}
+        for _ in range(rng.randrange(1, 30)):
+            if rng.random() < 0.5:
+                # Account or code zone: 33-byte stem.
+                stem = bytes([rng.choice((0, 1))]) + rng.randbytes(32)
+            else:
+                # Storage zone: 65-byte stem.
+                stem = b"\xff" + rng.randbytes(64)
+            for _ in range(rng.randrange(1, 4)):
+                entries[stem + rng.randbytes(1)] = rng.randbytes(32)
+
+        reference = ReferenceBinaryTree()
+        trie = BinaryTrie()
+        for key, value in entries.items():
+            reference.insert(key, value)
+            trie_set(trie, Bytes(key), Bytes32(value))
+
+        assert root(trie) == reference.merkelize(), f"trial {trial}"
+
+
+def test_prefix_stem_violation_is_rejected() -> None:
+    """
+    A stem that is a prefix of another stem makes the tree
+    ill-defined, and computing the root fails the prefix-freeness
+    assertion.
+    """
+    trie = BinaryTrie()
+    # 33-byte stem, and a 65-byte stem extending it.
+    trie_set(trie, Bytes(b"\xaa" * 33 + b"\x00"), Bytes32(b"\x01" * 32))
+    trie_set(
+        trie,
+        Bytes(b"\xaa" * 33 + b"\xbb" * 32 + b"\x00"),
+        Bytes32(b"\x02" * 32),
+    )
+
+    with pytest.raises(AssertionError):
+        root(trie)
 
 
 def test_root_is_insertion_order_independent() -> None:

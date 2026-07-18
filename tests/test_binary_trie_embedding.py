@@ -1,12 +1,13 @@
 """
-Tests for the EIP-8297 embedding of state into the binary tree.
+Tests for the embedding of state into the binary tree.
 
-The key-derivation tests rebuild the expected keys bit by bit from
-BLAKE3 output, independently of the implementation, following the
-vectors in the EIP's "Test Cases" section.
+The embedding implements the variable-length key variant of
+EIP-8297: a zone byte followed by full, untruncated digests and a
+sub-index byte. The key-derivation tests rebuild the expected keys
+byte by byte from BLAKE3 output, independently of the
+implementation. Sub-index vectors follow the EIP's "Test Cases"
+section; the stem shapes follow the variant.
 """
-
-from typing import List
 
 import pytest
 from blake3 import blake3
@@ -14,14 +15,18 @@ from ethereum_types.bytes import Bytes, Bytes20, Bytes32
 from ethereum_types.numeric import U256, Uint
 
 from ethereum.binary_trie.embedding import (
+    ACCOUNT_KEY_LENGTH,
     ACCOUNT_ZONE,
     BASIC_DATA_LEAF_KEY,
     CODE_HASH_LEAF_KEY,
+    CODE_KEY_LENGTH,
     CODE_OFFSET,
     CODE_ZONE,
     EMPTY_CODE_HASH,
     HEADER_STORAGE_OFFSET,
     STEM_SUBTREE_WIDTH,
+    STORAGE_KEY_LENGTH,
+    STORAGE_ZONE,
     Address32,
     address20_to_address32,
     chunkify_code,
@@ -38,27 +43,12 @@ from ethereum.state import EMPTY_CODE_HASH as MPT_STATE_EMPTY_CODE_HASH
 ADDRESS = Address32(b"\x00" * 12 + b"\xaa" * 20)
 
 
-# These helpers re-derive bit manipulation independently
-# of `ethereum.binary_trie`, to try and catch bugs.
-# TODO: maybe it is simple enough that we can delete?
-def _bits(data: bytes) -> List[int]:
-    return [(byte >> (7 - i)) & 1 for byte in data for i in range(8)]
-
-
-def _pack_bits(bits: List[int]) -> bytes:
-    return bytes(
-        sum(bits[i + j] << (7 - j) for j in range(8))
-        for i in range(0, len(bits), 8)
-    )
-
-
 def _header_stem(address: Address32) -> bytes:
     """
-    Build `0x0 || H(address)[:244]`, the account header stem, from
+    Build `0x00 || H(address)`, the 33-byte account header stem, from
     scratch.
     """
-    digest_bits = _bits(blake3(bytes(address)).digest())
-    return _pack_bits([0, 0, 0, 0] + digest_bits[:244])
+    return bytes([0]) + blake3(bytes(address)).digest()
 
 
 def test_embedding_constants() -> None:
@@ -72,6 +62,10 @@ def test_embedding_constants() -> None:
     assert STEM_SUBTREE_WIDTH == Uint(256)
     assert ACCOUNT_ZONE == Uint(0)
     assert CODE_ZONE == Uint(1)
+    assert STORAGE_ZONE == Uint(255)
+    assert ACCOUNT_KEY_LENGTH == Uint(34)
+    assert CODE_KEY_LENGTH == Uint(34)
+    assert STORAGE_KEY_LENGTH == Uint(66)
 
 
 def test_address20_to_address32_prepends_zeros() -> None:
@@ -104,51 +98,43 @@ def test_key_hash_is_blake3() -> None:
     assert key_hash(ADDRESS) == blake3(bytes(ADDRESS)).digest()
 
 
-def test_zone_stem_places_zone_in_high_nibble() -> None:
+def test_zone_stem_prepends_zone_byte() -> None:
     """
-    A zone stem is the 4-bit zone followed by 244 bits of digest.
-
-    The zone displaces 4 of the 248 digest bits a stem carried before
-    partitioning; the EIP shows the reduced collision resistance is
-    still far beyond reach.
-    TODO: Though we will change this for the option in Vitalik's
-    change
+    A zone stem is the zone byte followed by the whole digest,
+    nothing truncated.
     """
     digest = blake3(b"digest").digest()
-    for zone in range(16):
+    for zone in (0, 1, 2, 254, 255):
         stem = zone_stem(Uint(zone), digest)
-        assert len(stem) == 31
-        assert stem[0] >> 4 == zone
-        expected = _pack_bits(
-            _bits(bytes([zone << 4]))[:4] + _bits(digest)[:244]
-        )
-        assert stem == expected
+        assert len(stem) == 33
+        assert stem == bytes([zone]) + digest
 
 
-def test_zone_stem_rejects_zone_wider_than_four_bits() -> None:
+def test_zone_stem_rejects_zone_wider_than_one_byte() -> None:
     """
-    A zone identifier that does not fit in the 4 zone bits is
-    rejected.
+    A zone identifier that does not fit in the zone byte is rejected.
     """
     digest = blake3(b"digest").digest()
     with pytest.raises(AssertionError):
-        zone_stem(Uint(16), digest)
+        zone_stem(Uint(256), digest)
 
 
 def test_header_key_vectors() -> None:
     """
-    EIP vector: header keys are `0x0 || H(A)[:244]` plus the leaf's
-    sub-index.
+    Header keys are `0x00 || H(A)` plus the leaf's sub-index,
+    34 bytes in total.
     """
     stem = _header_stem(ADDRESS)
 
     assert get_tree_key_for_basic_data(ADDRESS) == stem + b"\x00"
     assert get_tree_key_for_code_hash(ADDRESS) == stem + b"\x01"
+    assert len(get_tree_key_for_basic_data(ADDRESS)) == 34
 
 
 def test_storage_slot_in_header_vector() -> None:
     """
-    EIP vector: storage slot 5 lives in the header at sub-index 0x45.
+    EIP sub-index vector: storage slot 5 lives in the header at
+    sub-index 0x45.
     """
     key = get_tree_key_for_storage_slot(ADDRESS, U256(5))
     assert key == _header_stem(ADDRESS) + bytes([0x45])
@@ -156,19 +142,18 @@ def test_storage_slot_in_header_vector() -> None:
 
 def test_storage_slot_overflow_vector() -> None:
     """
-    EIP vector: slot 1000 maps to tree index 3, sub-index 0xE8, with
-    stem `1 || H(A)[:60] || H(A || 3)[:187]`.
+    Slot 1000 maps to tree index 3, sub-index 0xE8, with the 65-byte
+    stem `0xFF || H(A) || H(A || 3)`.
     """
-    prefix = _bits(blake3(bytes(ADDRESS)).digest())[:60]
-    suffix = _bits(blake3(bytes(ADDRESS) + (3).to_bytes(32, "big")).digest())[
-        :187
-    ]
-    stem = _pack_bits([1] + prefix + suffix)
+    prefix = blake3(bytes(ADDRESS)).digest()
+    suffix = blake3(bytes(ADDRESS) + (3).to_bytes(32, "big")).digest()
+    stem = bytes([255]) + prefix + suffix
 
     key = get_tree_key_for_storage_slot(ADDRESS, U256(1000))
     assert key == stem + bytes([0xE8])
-    # Storage stems are in the storage zone: high bit set.
-    assert key[0] >> 7 == 1
+    assert len(key) == 66
+    # Storage keys carry the storage zone byte.
+    assert key[0] == 0xFF
 
 
 def test_storage_slot_boundary_is_64() -> None:
@@ -180,11 +165,10 @@ def test_storage_slot_boundary_is_64() -> None:
         ADDRESS
     ) + bytes([127])
 
-    suffix = _bits(blake3(bytes(ADDRESS) + (0).to_bytes(32, "big")).digest())[
-        :187
-    ]
-    overflow_stem = _pack_bits(
-        [1] + _bits(blake3(bytes(ADDRESS)).digest())[:60] + suffix
+    overflow_stem = (
+        bytes([255])
+        + blake3(bytes(ADDRESS)).digest()
+        + blake3(bytes(ADDRESS) + (0).to_bytes(32, "big")).digest()
     )
     assert get_tree_key_for_storage_slot(
         ADDRESS, U256(64)
@@ -193,7 +177,8 @@ def test_storage_slot_boundary_is_64() -> None:
 
 def test_code_chunk_in_header_vector() -> None:
     """
-    EIP vector: code chunk 5 lives in the header at sub-index 0x85.
+    EIP sub-index vector: code chunk 5 lives in the header at
+    sub-index 0x85.
     """
     code_hash = Bytes32(blake3(b"some code").digest())
 
@@ -203,15 +188,16 @@ def test_code_chunk_in_header_vector() -> None:
 
 def test_code_chunk_overflow_vector() -> None:
     """
-    EIP vector: chunk 300 overflows to sub-index 0xAC with stem
-    `0x1 || H(C || 0)[:244]`.
+    Chunk 300 overflows to sub-index 0xAC with the 33-byte stem
+    `0x01 || H(C || 0)`.
     """
     code_hash = Bytes32(blake3(b"some code").digest())
     digest = blake3(code_hash + (0).to_bytes(32, "big")).digest()
-    stem = _pack_bits([0, 0, 0, 1] + _bits(digest)[:244])
+    stem = bytes([1]) + digest
 
     key = get_tree_key_for_code_chunk(ADDRESS, code_hash, Uint(300))
     assert key == stem + bytes([0xAC])
+    assert len(key) == 34
 
 
 def test_overflow_code_is_content_addressed() -> None:
