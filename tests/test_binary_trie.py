@@ -1,10 +1,14 @@
 """
-Tests for the raw EIP-8297 binary tree structure.
+Tests for the raw binary tree structure.
 
-The tests verify the spec-style implementation in
-`ethereum.binary_trie.trie` against hand-computed hashes and against
-a near-verbatim port of the EIP's insertion-based reference
-implementation.
+The tree is a compressed binary radix trie: branch, extension, and
+leaf nodes, with domain-separated hashing. The tests verify the
+spec-style implementation in `ethereum.binary_trie.trie` against
+hand-computed hashes and against an independent insertion-based
+reference. Because the spec rebuilds the canonical form from scratch
+while the reference builds it incrementally, agreement on every root
+is also a check that both constructions produce the same canonical
+structure.
 """
 
 import random
@@ -24,33 +28,33 @@ from ethereum.binary_trie.trie import (
     trie_set,
 )
 
-
-def reference_hash(data: Optional[bytes]) -> bytes:
-    """
-    Hash node data following EIP-8297's merkleization rules.
-
-    `None` is an absent leaf value; 64 zero bytes is a pairing of two
-    empty commitments. Both commit to 32 zero bytes so that empty
-    subtrees stay all-zero at every level of the tree.
-    """
-    if data is None or data == b"\x00" * 64:
-        return b"\x00" * 32
-    assert len(data) == 32 or len(data) >= 34
-    return blake3(data).digest()
+# These helpers re-derive bit manipulation and node hashing
+# independently of `ethereum.binary_trie`, to try and catch bugs.
 
 
-def reference_stem_node_hash(stem: bytes, values: Dict[int, bytes]) -> bytes:
-    """
-    Hash a stem node holding `values` (sub-index to 32-byte value) by
-    following the EIP merkleization rules directly.
-    """
-    level = [reference_hash(values.get(i)) for i in range(256)]
-    while len(level) > 1:
-        level = [
-            reference_hash(level[i] + level[i + 1])
-            for i in range(0, len(level), 2)
-        ]
-    return reference_hash(stem + b"\x00" + level[0])
+def _bits(data: bytes) -> List[int]:
+    return [(byte >> (7 - i)) & 1 for byte in data for i in range(8)]
+
+
+def _pack_padded(bits: List[int]) -> bytes:
+    packed = bytearray((len(bits) + 7) // 8)
+    for i, bit in enumerate(bits):
+        packed[i // 8] |= bit << (7 - i % 8)
+    return bytes(packed)
+
+
+def _leaf_hash(key: bytes, value: bytes) -> bytes:
+    return blake3(b"\x00" + key + value).digest()
+
+
+def _extension_hash(prefix: List[int], child: bytes) -> bytes:
+    return blake3(
+        b"\x01" + len(prefix).to_bytes(2, "big") + _pack_padded(prefix) + child
+    ).digest()
+
+
+def _branch_hash(left: bytes, right: bytes) -> bytes:
+    return blake3(b"\x02" + left + right).digest()
 
 
 def test_bytes_to_bit_list_is_msb_first() -> None:
@@ -113,79 +117,91 @@ def test_copy_trie_is_independent() -> None:
     assert root(duplicate) != root(original)
 
 
-def test_single_key_root() -> None:
+def test_single_key_is_a_leaf_at_the_root() -> None:
     """
-    A trie with one key is a single stem node at the root.
+    A trie with one key commits to a single leaf, with no extension
+    above it: the leaf carries its full key.
     """
-    stem = b"\x00" * 31
-    sub_index = 5
-    key = Bytes32(stem + bytes([sub_index]))
+    key = Bytes(b"\x00" + b"\x42" * 32 + b"\x07")
     value = Bytes32(b"\x11" * 32)
 
     trie = BinaryTrie()
     trie_set(trie, key, value)
 
-    assert root(trie) == reference_stem_node_hash(stem, {sub_index: value})
+    assert root(trie) == _leaf_hash(key, value)
 
 
-def test_same_stem_values_share_a_stem_node() -> None:
+def test_keys_sharing_a_stem_split_under_one_extension() -> None:
     """
-    Keys sharing a stem land in one stem node's group of values.
+    Two keys sharing a 33-byte stem diverge in their final byte's
+    first bit: one extension over the whole stem, then a branch over
+    two leaves.
     """
-    stem = b"\x42" * 31
-    first_value = Bytes32(b"\x01" * 32)
-    second_value = Bytes32(b"\x02" * 32)
+    stem = b"\x00" + b"\x42" * 32
+    low_key = Bytes(stem + b"\x00")
+    high_key = Bytes(stem + b"\xff")
+    low_value = Bytes32(b"\x01" * 32)
+    high_value = Bytes32(b"\x02" * 32)
 
     trie = BinaryTrie()
-    trie_set(trie, Bytes32(stem + b"\x00"), first_value)
-    trie_set(trie, Bytes32(stem + b"\xff"), second_value)
+    trie_set(trie, low_key, low_value)
+    trie_set(trie, high_key, high_value)
 
-    assert root(trie) == reference_stem_node_hash(
-        stem, {0: first_value, 255: second_value}
+    assert root(trie) == _extension_hash(
+        _bits(stem),
+        _branch_hash(
+            _leaf_hash(low_key, low_value),
+            _leaf_hash(high_key, high_value),
+        ),
     )
 
 
-def test_stems_split_at_first_differing_bit() -> None:
+def test_first_bit_divergence_has_no_extension() -> None:
     """
-    Stems sharing a prefix split under a chain of internal nodes, one
-    per shared bit, each with an empty sibling subtree.
+    Keys differing in their first bit branch at the root with no
+    extension above the branch.
     """
-    # Both first bytes are 0b0000000x, so the stems share their first
-    # 7 bits and the split sits at depth 7.
-    left_stem = b"\x00" + b"\xaa" * 30
-    right_stem = b"\x01" + b"\xbb" * 30
+    zero_key = Bytes(b"\x00" * 34)
+    one_key = Bytes(b"\xff" * 66)
     value = Bytes32(b"\x33" * 32)
 
     trie = BinaryTrie()
-    trie_set(trie, Bytes32(left_stem + b"\x00"), value)
-    trie_set(trie, Bytes32(right_stem + b"\x00"), value)
+    trie_set(trie, zero_key, value)
+    trie_set(trie, one_key, value)
 
-    expected = reference_hash(
-        reference_stem_node_hash(left_stem, {0: value})
-        + reference_stem_node_hash(right_stem, {0: value})
+    assert root(trie) == _branch_hash(
+        _leaf_hash(zero_key, value), _leaf_hash(one_key, value)
     )
-    for _ in range(7):
-        expected = reference_hash(expected + b"\x00" * 32)
-
-    assert root(trie) == expected
 
 
-def test_storage_zone_splits_at_depth_one() -> None:
+def test_canonical_form_example() -> None:
     """
-    A storage-zone stem and a non-storage stem differ in bit 0, so
-    the root is an internal node over the two stem nodes directly.
+    Three keys sharing a stem, with sub-indices 0, 1, and 128: an
+    extension over the stem, a branch on the first sub-index bit, a
+    six-bit extension and branch over the two low leaves, and the
+    high leaf sitting directly under the top branch with no extension
+    above it.
     """
-    account_stem = b"\x00" * 31
-    storage_stem_ = b"\x80" + b"\x00" * 30
-    value = Bytes32(b"\x01" * 32)
+    stem = b"\xff" + b"\xab" * 32
+    key_0 = Bytes(stem + b"\x00")
+    key_1 = Bytes(stem + b"\x01")
+    key_128 = Bytes(stem + b"\x80")
+    value = Bytes32(b"\x44" * 32)
 
     trie = BinaryTrie()
-    trie_set(trie, Bytes32(account_stem + b"\x00"), value)
-    trie_set(trie, Bytes32(storage_stem_ + b"\x00"), value)
+    for key in (key_0, key_1, key_128):
+        trie_set(trie, key, value)
 
-    assert root(trie) == reference_hash(
-        reference_stem_node_hash(account_stem, {0: value})
-        + reference_stem_node_hash(storage_stem_, {0: value})
+    low_side = _extension_hash(
+        [0] * 6,
+        _branch_hash(
+            _leaf_hash(key_0, value),
+            _leaf_hash(key_1, value),
+        ),
+    )
+    assert root(trie) == _extension_hash(
+        _bits(stem),
+        _branch_hash(low_side, _leaf_hash(key_128, value)),
     )
 
 
@@ -201,176 +217,165 @@ def test_zero_value_is_not_absence() -> None:
     assert root(trie) != EMPTY_TRIE_ROOT
 
 
-class ReferenceBinaryTree:
+def test_prefix_key_violation_is_rejected() -> None:
     """
-    Near-verbatim port of EIP-8297's insertion-based reference
-    implementation, used only to cross-check `ethereum.binary_trie`.
+    A key that is a prefix of another key makes the tree ill-defined,
+    and computing the root fails the prefix-freeness assertion.
+    """
+    trie = BinaryTrie()
+    trie_set(trie, Bytes(b"\xaa" * 34), Bytes32(b"\x01" * 32))
+    trie_set(trie, Bytes(b"\xaa" * 34 + b"\xbb" * 32), Bytes32(b"\x02" * 32))
+
+    with pytest.raises(AssertionError):
+        root(trie)
+
+
+class ReferenceRadixTree:
+    """
+    Insertion-based compressed binary radix tree, used only to
+    cross-check `ethereum.binary_trie`.
+
+    Follows the standard descend/split insertion algorithm and hashes
+    with independently written tagged rules, so agreement with the
+    rebuild-from-scratch spec implementation also checks that both
+    produce the same canonical structure.
     """
 
-    class StemNode:
+    class Leaf:
         """
-        Stem node of the reference implementation.
-        """
-
-        def __init__(self, stem: bytes) -> None:
-            self.stem = stem
-            self.values: List[Optional[bytes]] = [None] * 256
-
-        def set_value(self, index: int, value: bytes) -> None:
-            """
-            Store `value` at `index` within this stem's group.
-            """
-            self.values[index] = value
-
-    class InternalNode:
-        """
-        Internal (binary branch) node of the reference implementation.
+        Terminal node of the reference implementation.
         """
 
-        def __init__(self) -> None:
-            self.left: Optional[object] = None
-            self.right: Optional[object] = None
+        def __init__(self, key: bytes, value: bytes) -> None:
+            self.key = key
+            self.value = value
+
+    class Extension:
+        """
+        Compression node of the reference implementation.
+        """
+
+        def __init__(self, prefix: List[int], child: object) -> None:
+            self.prefix = prefix
+            self.child = child
+
+    class Branch:
+        """
+        Binary branch node of the reference implementation.
+        """
+
+        def __init__(self, left: object, right: object) -> None:
+            self.left = left
+            self.right = right
 
     def __init__(self) -> None:
         self.root: Optional[object] = None
 
-    @staticmethod
-    def _bytes_to_bits(data: bytes) -> List[int]:
-        return [(byte >> (7 - i)) & 1 for byte in data for i in range(8)]
-
-    @staticmethod
-    def _bits_to_bytes(bits: List[int]) -> bytes:
-        return bytes(
-            sum(bits[i + j] << (7 - j) for j in range(8))
-            for i in range(0, len(bits), 8)
-        )
-
     def insert(self, key: bytes, value: bytes) -> None:
         """
-        Insert `key` and `value`, splitting stem nodes as needed.
+        Insert `key` and `value`, splitting nodes as needed.
         """
         assert len(value) == 32
-        stem = key[:-1]
-        subindex = key[-1]
-
         if self.root is None:
-            self.root = self.StemNode(stem)
-            self.root.set_value(subindex, value)
+            self.root = self.Leaf(key, value)
             return
-
-        self.root = self._insert(self.root, stem, subindex, value, 0)
+        self.root = self._insert(self.root, _bits(key), key, value, 0)
 
     def _insert(  # type: ignore[no-untyped-def]
-        self, node, stem, subindex, value, depth
+        self, node, bits, key, value, depth
     ):
-        assert depth < 8 * len(stem)
-
-        if node is None:
-            node = self.StemNode(stem)
-            node.set_value(subindex, value)
-            return node
-
-        stem_bits = self._bytes_to_bits(stem)
-        if isinstance(node, self.StemNode):
-            if node.stem == stem:
-                node.set_value(subindex, value)
+        if isinstance(node, self.Leaf):
+            if node.key == key:
+                node.value = value
                 return node
-            existing_stem_bits = self._bytes_to_bits(node.stem)
-            return self._split_leaf(
-                node, stem_bits, existing_stem_bits, subindex, value, depth
-            )
+            other_bits = _bits(node.key)
+            run = 0
+            while True:
+                position = depth + run
+                assert position < len(bits) and position < len(other_bits)
+                if bits[position] != other_bits[position]:
+                    break
+                run += 1
+            leaf = self.Leaf(key, value)
+            if bits[depth + run] == 0:
+                branch = self.Branch(leaf, node)
+            else:
+                branch = self.Branch(node, leaf)
+            if run > 0:
+                return self.Extension(bits[depth : depth + run], branch)
+            return branch
 
-        bit = stem_bits[depth]
-        if bit == 0:
-            node.left = self._insert(
-                node.left, stem, subindex, value, depth + 1
-            )
+        if isinstance(node, self.Extension):
+            matched = 0
+            while matched < len(node.prefix):
+                position = depth + matched
+                assert position < len(bits)
+                if bits[position] != node.prefix[matched]:
+                    break
+                matched += 1
+            if matched == len(node.prefix):
+                node.child = self._insert(
+                    node.child, bits, key, value, depth + matched
+                )
+                return node
+            # Split the extension at the first mismatched bit.
+            remaining = node.prefix[matched + 1 :]
+            if remaining:
+                existing = self.Extension(remaining, node.child)
+            else:
+                existing = node.child
+            leaf = self.Leaf(key, value)
+            if bits[depth + matched] == 0:
+                branch = self.Branch(leaf, existing)
+            else:
+                branch = self.Branch(existing, leaf)
+            if matched > 0:
+                return self.Extension(node.prefix[:matched], branch)
+            return branch
+
+        assert depth < len(bits)
+        if bits[depth] == 0:
+            node.left = self._insert(node.left, bits, key, value, depth + 1)
         else:
-            node.right = self._insert(
-                node.right, stem, subindex, value, depth + 1
-            )
+            node.right = self._insert(node.right, bits, key, value, depth + 1)
         return node
-
-    def _split_leaf(  # type: ignore[no-untyped-def]
-        self, leaf, stem_bits, existing_stem_bits, subindex, value, depth
-    ):
-        if stem_bits[depth] == existing_stem_bits[depth]:
-            new_internal = self.InternalNode()
-            bit = stem_bits[depth]
-            if bit == 0:
-                new_internal.left = self._split_leaf(
-                    leaf,
-                    stem_bits,
-                    existing_stem_bits,
-                    subindex,
-                    value,
-                    depth + 1,
-                )
-            else:
-                new_internal.right = self._split_leaf(
-                    leaf,
-                    stem_bits,
-                    existing_stem_bits,
-                    subindex,
-                    value,
-                    depth + 1,
-                )
-            return new_internal
-        else:
-            new_internal = self.InternalNode()
-            bit = stem_bits[depth]
-            stem = self._bits_to_bytes(stem_bits)
-            if bit == 0:
-                new_internal.left = self.StemNode(stem)
-                new_internal.left.set_value(subindex, value)
-                new_internal.right = leaf
-            else:
-                new_internal.right = self.StemNode(stem)
-                new_internal.right.set_value(subindex, value)
-                new_internal.left = leaf
-            return new_internal
 
     def merkelize(self) -> bytes:
         """
         Compute the root hash of the reference tree.
         """
+        if self.root is None:
+            return b"\x00" * 32
 
-        def _merkelize(node):  # type: ignore[no-untyped-def]
-            if node is None:
-                return b"\x00" * 32
-            if isinstance(node, self.InternalNode):
-                left_hash = _merkelize(node.left)
-                right_hash = _merkelize(node.right)
-                return reference_hash(left_hash + right_hash)
+        def _hash(node: object) -> bytes:
+            if isinstance(node, self.Leaf):
+                return _leaf_hash(node.key, node.value)
+            if isinstance(node, self.Extension):
+                return _extension_hash(node.prefix, _hash(node.child))
+            assert isinstance(node, self.Branch)
+            return _branch_hash(_hash(node.left), _hash(node.right))
 
-            level = [reference_hash(x) for x in node.values]
-            while len(level) > 1:
-                new_level = []
-                for i in range(0, len(level), 2):
-                    new_level.append(reference_hash(level[i] + level[i + 1]))
-                level = new_level
-            return reference_hash(node.stem + b"\0" + level[0])
-
-        return _merkelize(self.root)
+        return _hash(self.root)
 
 
 def random_entries(rng: random.Random) -> Dict[bytes, bytes]:
     """
     Generate a random key/value set mixing three key shapes: fully
-    random keys, keys sharing an existing stem, and keys sharing a
-    long stem prefix (forcing deep splits in the outer trie).
+    random keys, keys sharing an existing 31-byte prefix, and keys
+    sharing a shorter prefix (forcing splits at every depth).
     """
     entries: Dict[bytes, bytes] = {}
     for _ in range(rng.randrange(1, 40)):
         key = rng.randbytes(32)
         entries[key] = rng.randbytes(32)
 
-        # Same stem, different sub-index: lands in the same stem node.
+        # Same first 31 bytes, different final byte: long shared
+        # prefixes compressed by one extension.
         for _ in range(rng.randrange(0, 3)):
             entries[key[:31] + rng.randbytes(1)] = rng.randbytes(32)
 
-        # Same first 1, 7, or 30 stem bytes: splits 8, 56, or 240
-        # bits deep.
+        # Same first 1, 7, or 30 bytes: splits 8, 56, or 240 bits
+        # deep.
         for prefix_length in (1, 7, 30):
             if rng.random() < 0.2:
                 cousin = (
@@ -382,28 +387,28 @@ def random_entries(rng: random.Random) -> Dict[bytes, bytes]:
     return entries
 
 
-def test_root_matches_eip_reference_implementation() -> None:
+def test_root_matches_reference_implementation() -> None:
     """
     Randomized key/value sets produce the same root in the spec-style
-    implementation and the EIP's insertion-based reference.
+    rebuild and the insertion-based reference.
     """
     rng = random.Random(8297)
 
     for trial in range(20):
         entries = random_entries(rng)
 
-        reference = ReferenceBinaryTree()
+        reference = ReferenceRadixTree()
         trie = BinaryTrie()
         for key, value in entries.items():
             reference.insert(key, value)
-            trie_set(trie, Bytes32(key), Bytes32(value))
+            trie_set(trie, Bytes(key), Bytes32(value))
 
         assert root(trie) == reference.merkelize(), f"trial {trial}"
 
 
 def test_root_matches_reference_with_variable_length_keys() -> None:
     """
-    Keys shaped like the embedding's; 34-byte account and code keys,
+    Keys shaped like the embedding's, 34-byte account and code keys,
     66-byte storage keys produce the same root in both
     implementations when mixed in one tree.
     """
@@ -413,40 +418,21 @@ def test_root_matches_reference_with_variable_length_keys() -> None:
         entries: Dict[bytes, bytes] = {}
         for _ in range(rng.randrange(1, 30)):
             if rng.random() < 0.5:
-                # Account or code zone: 33-byte stem.
-                stem = bytes([rng.choice((0, 1))]) + rng.randbytes(32)
+                # Account or code zone: 34-byte keys.
+                prefix = bytes([rng.choice((0, 1))]) + rng.randbytes(32)
             else:
-                # Storage zone: 65-byte stem.
-                stem = b"\xff" + rng.randbytes(64)
+                # Storage zone: 66-byte keys.
+                prefix = b"\xff" + rng.randbytes(64)
             for _ in range(rng.randrange(1, 4)):
-                entries[stem + rng.randbytes(1)] = rng.randbytes(32)
+                entries[prefix + rng.randbytes(1)] = rng.randbytes(32)
 
-        reference = ReferenceBinaryTree()
+        reference = ReferenceRadixTree()
         trie = BinaryTrie()
         for key, value in entries.items():
             reference.insert(key, value)
             trie_set(trie, Bytes(key), Bytes32(value))
 
         assert root(trie) == reference.merkelize(), f"trial {trial}"
-
-
-def test_prefix_stem_violation_is_rejected() -> None:
-    """
-    A stem that is a prefix of another stem makes the tree
-    ill-defined, and computing the root fails the prefix-freeness
-    assertion.
-    """
-    trie = BinaryTrie()
-    # 33-byte stem, and a 65-byte stem extending it.
-    trie_set(trie, Bytes(b"\xaa" * 33 + b"\x00"), Bytes32(b"\x01" * 32))
-    trie_set(
-        trie,
-        Bytes(b"\xaa" * 33 + b"\xbb" * 32 + b"\x00"),
-        Bytes32(b"\x02" * 32),
-    )
-
-    with pytest.raises(AssertionError):
-        root(trie)
 
 
 def test_root_is_insertion_order_independent() -> None:

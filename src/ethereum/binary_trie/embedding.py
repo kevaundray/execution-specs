@@ -44,7 +44,19 @@ from ethereum_types.numeric import U256, Uint
 from ethereum.crypto.hash import Hash32, keccak256
 from ethereum.utils.byte import left_pad_zero_bytes
 
-from .trie import Key, Stem, blake3_hash
+from .trie import Key, blake3_hash
+
+Stem = Bytes
+"""
+All bytes of a [`Key`] except the final sub-index byte.
+
+The stem is purely an embedding concept: the tree has no stem node
+type, but keys sharing a stem share a long bit prefix, so their
+values co-locate under one compressed subtree and open together in
+one branch.
+
+[`Key`]: ref:ethereum.binary_trie.trie.Key
+"""
 
 Zone = Uint
 """
@@ -57,7 +69,7 @@ categories. Because the tree consumes key bits most significant
 first, every zone is a subtree rooted eight levels below the tree's
 root.
 
-[`Stem`]: ref:ethereum.binary_trie.trie.Stem
+[`Stem`]: ref:ethereum.binary_trie.embedding.Stem
 [`ACCOUNT_ZONE`]: ref:ethereum.binary_trie.embedding.ACCOUNT_ZONE
 [`CODE_ZONE`]: ref:ethereum.binary_trie.embedding.CODE_ZONE
 [`STORAGE_ZONE`]: ref:ethereum.binary_trie.embedding.STORAGE_ZONE

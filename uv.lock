@@ -906,6 +906,7 @@ wheels = [
 name = "ethereum-execution"
 source = { editable = "." }
 dependencies = [
+    { name = "blake3" },
     { name = "cryptography" },
     { name = "ethereum-rlp" },
     { name = "ethereum-types" },
@@ -1018,6 +1019,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "blake3", specifier = ">=1.0,<2" },
     { name = "cryptography", specifier = ">=45.0.1,<46" },
     { name = "ethash", marker = "extra == 'optimized'", specifier = ">=1.1.0,<2" },
     { name = "ethereum-rlp", specifier = ">=0.1.6,<0.2" },
