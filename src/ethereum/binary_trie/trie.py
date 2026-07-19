@@ -11,12 +11,14 @@ bit, most significant bit first, and must be prefix-free; see
 
 Unlike the hexary Merkle Patricia Trie it is designed to replace, the
 tree uses no RLP and has no node type with Ethereum semantics: a
-[`BranchNode`] splits on a single bit, an [`ExtensionNode`]
-compresses a run of bits shared by every key below it, and a
-[`LeafNode`] holds one key's value. The tree is kept maximally
-compressed — a branch always has two subtrees, an extension appears
-only above a branch, and a lone key terminates in a leaf immediately
-— so one committed state has exactly one node structure and one root.
+[`BranchNode`] splits on a single bit and carries the run of bits
+every key below it shares, and a [`LeafNode`] holds one key's value.
+There is no separate extension node: the prefix lives on the branch
+itself. The structure is canonical by construction — a branch always
+has two non-empty subtrees, which forces its prefix to be exactly the
+shared run, and a leaf carries its full key — so a non-canonical
+tree is unrepresentable and one committed state has exactly one node
+structure and one root.
 
 The mapping of keys to values is exposed through [`BinaryTrie`]; the
 [`root`] function reduces a trie to its 32-byte commitment. The hash
@@ -31,7 +33,6 @@ logical **stem** grouping, is defined in
 [EIP-8297]: https://eips.ethereum.org/EIPS/eip-8297
 [`Key`]: ref:ethereum.binary_trie.trie.Key
 [`BranchNode`]: ref:ethereum.binary_trie.trie.BranchNode
-[`ExtensionNode`]: ref:ethereum.binary_trie.trie.ExtensionNode
 [`LeafNode`]: ref:ethereum.binary_trie.trie.LeafNode
 [`BinaryTrie`]: ref:ethereum.binary_trie.trie.BinaryTrie
 [`root`]: ref:ethereum.binary_trie.trie.root
@@ -110,22 +111,15 @@ LEAF_NODE_TAG = Bytes(b"\x00")
 """
 First byte of every [`LeafNode`] hash preimage.
 
-Each node type hashes behind its own tag byte so that no two node
-types can share a preimage and one root commits to exactly one node
-structure; see [`merkleize`].
+Each node type hashes behind its own tag byte so that the two node
+types can never share a preimage and one root commits to exactly one
+node structure; see [`merkleize`].
 
 [`LeafNode`]: ref:ethereum.binary_trie.trie.LeafNode
 [`merkleize`]: ref:ethereum.binary_trie.trie.merkleize
 """
 
-EXTENSION_NODE_TAG = Bytes(b"\x01")
-"""
-First byte of every [`ExtensionNode`] hash preimage.
-
-[`ExtensionNode`]: ref:ethereum.binary_trie.trie.ExtensionNode
-"""
-
-BRANCH_NODE_TAG = Bytes(b"\x02")
+BRANCH_NODE_TAG = Bytes(b"\x01")
 """
 First byte of every [`BranchNode`] hash preimage.
 
@@ -143,8 +137,7 @@ class LeafNode:
     The complete key is committed, not just the bits below the
     leaf's position, so a leaf's meaning never depends on the path
     taken to reach it. A lone key becomes a leaf immediately at its
-    point of divergence; an extension never sits directly above a
-    leaf.
+    point of divergence.
     """
 
     key: Key
@@ -163,60 +156,45 @@ class LeafNode:
 @final
 @slotted_freezable
 @dataclass
-class ExtensionNode:
+class BranchNode:
     """
-    Compression node standing in for a run of bits shared by every
-    key in the subtree below it.
+    Binary branch splitting on a single bit, carrying the run of bits
+    every key below it shares beyond the bits consumed above it.
 
-    Extensions are a pure compression device with no Ethereum
-    meaning. To keep the structure canonical, an extension always
-    sits directly above a [`BranchNode`] and is as long as possible:
-    extensions never chain and never sit above a [`LeafNode`], which
-    already carries its full key.
-
-    [`BranchNode`]: ref:ethereum.binary_trie.trie.BranchNode
-    [`LeafNode`]: ref:ethereum.binary_trie.trie.LeafNode
+    Both subtrees are always present, and that requirement is what
+    makes the structure canonical without further rules: a prefix
+    shorter than the true shared run would leave every key agreeing
+    on the split bit, emptying one side, so a branch with a
+    non-maximal prefix is unrepresentable rather than merely
+    forbidden. There is no separate extension node to misplace, and
+    a leaf already carries its full key.
     """
 
     prefix: Bytes
     """
-    The shared run of bits, one bit per byte, in consumption order.
-    """
-
-    child: "BinaryNode"
-    """
-    The [`BranchNode`] below the compressed run.
-
-    [`BranchNode`]: ref:ethereum.binary_trie.trie.BranchNode
-    """
-
-
-@final
-@slotted_freezable
-@dataclass
-class BranchNode:
-    """
-    Binary branch splitting on a single bit.
-
-    Both subtrees are always present: a branch with an empty side
-    would compress away, so empty siblings never appear in the tree
-    or in its proofs.
+    Run of bits shared by every key below this branch, one bit per
+    byte, in consumption order; empty when the keys diverge
+    immediately.
     """
 
     left: "BinaryNode"
     """
-    Subtree of keys whose next bit is `0`.
+    Subtree of keys whose bit after [`prefix`] is `0`.
+
+    [`prefix`]: ref:ethereum.binary_trie.trie.BranchNode.prefix
     """
 
     right: "BinaryNode"
     """
-    Subtree of keys whose next bit is `1`.
+    Subtree of keys whose bit after [`prefix`] is `1`.
+
+    [`prefix`]: ref:ethereum.binary_trie.trie.BranchNode.prefix
     """
 
 
-BinaryNode = Union[BranchNode, ExtensionNode, LeafNode]
+BinaryNode = Union[BranchNode, LeafNode]
 """
-Any of the node types making up a non-empty binary tree.
+Either of the node types making up a non-empty binary tree.
 """
 
 
@@ -270,7 +248,7 @@ def trie_get(trie: BinaryTrie, key: Key) -> Optional[Bytes32]:
 
 def encode_bit_prefix(prefix: Bytes) -> Bytes:
     """
-    Encode an extension prefix for hashing: a two-byte big-endian bit
+    Encode a branch prefix for hashing: a two-byte big-endian bit
     count followed by the bits packed most significant bit first,
     zero padded to a byte boundary.
 
@@ -288,20 +266,17 @@ def merkleize(node: BinaryNode) -> Hash32:
     """
     Compute the hash committing to `node` and everything below it.
 
-    Every node type hashes behind its own tag byte, and extension
-    prefixes carry an explicit bit count, so no two distinct nodes
+    Each node type hashes behind its own tag byte, and a branch's
+    prefix carries an explicit bit count, so no two distinct nodes
     can share a preimage: one root commits to exactly one tree.
     """
     if isinstance(node, LeafNode):
         return blake3_hash(LEAF_NODE_TAG + node.key + node.value)
-    if isinstance(node, ExtensionNode):
-        return blake3_hash(
-            EXTENSION_NODE_TAG
-            + encode_bit_prefix(node.prefix)
-            + merkleize(node.child)
-        )
     return blake3_hash(
-        BRANCH_NODE_TAG + merkleize(node.left) + merkleize(node.right)
+        BRANCH_NODE_TAG
+        + encode_bit_prefix(node.prefix)
+        + merkleize(node.left)
+        + merkleize(node.right)
     )
 
 
@@ -311,13 +286,12 @@ def binarize(entries: Mapping[Key, Bytes32], depth: Uint) -> BinaryNode:
     share their first `depth` bits. `entries` must not be empty.
 
     A single entry becomes a [`LeafNode`] immediately. Multiple
-    entries split at their first differing bit under a
-    [`BranchNode`], wrapped in an [`ExtensionNode`] when they share
-    bits beyond `depth`.
+    entries become a [`BranchNode`] carrying the run of bits they
+    share beyond `depth` and splitting on the first bit where they
+    differ.
 
     [`LeafNode`]: ref:ethereum.binary_trie.trie.LeafNode
     [`BranchNode`]: ref:ethereum.binary_trie.trie.BranchNode
-    [`ExtensionNode`]: ref:ethereum.binary_trie.trie.ExtensionNode
     """
     assert len(entries) > 0
     if len(entries) == 1:
@@ -351,14 +325,12 @@ def binarize(entries: Mapping[Key, Bytes32], depth: Uint) -> BinaryNode:
         for key, value in entries.items()
         if bit_lists[key][split] == 1
     }
-    branch = BranchNode(
+    shared_bits = next(iter(bit_lists.values()))
+    return BranchNode(
+        Bytes(shared_bits[depth:split]),
         binarize(left, split + Uint(1)),
         binarize(right, split + Uint(1)),
     )
-    if prefix_length == Uint(0):
-        return branch
-    shared_bits = next(iter(bit_lists.values()))
-    return ExtensionNode(Bytes(shared_bits[depth:split]), branch)
 
 
 def root(trie: BinaryTrie) -> Hash32:

@@ -1,14 +1,14 @@
 """
 Tests for the raw binary tree structure.
 
-The tree is a compressed binary radix trie: branch, extension, and
-leaf nodes, with domain-separated hashing. The tests verify the
-spec-style implementation in `ethereum.binary_trie.trie` against
-hand-computed hashes and against an independent insertion-based
-reference. Because the spec rebuilds the canonical form from scratch
-while the reference builds it incrementally, agreement on every root
-is also a check that both constructions produce the same canonical
-structure.
+The tree is a compressed binary radix trie with two node types:
+prefix-carrying branches and full-key leaves, hashed behind
+domain-separating tags. The tests verify the spec-style
+implementation in `ethereum.binary_trie.trie` against hand-computed
+hashes and against an independent insertion-based reference. Because
+the spec rebuilds the canonical form from scratch while the reference
+builds it incrementally, agreement on every root is also a check that
+both constructions produce the same canonical structure.
 """
 
 import random
@@ -47,14 +47,14 @@ def _leaf_hash(key: bytes, value: bytes) -> bytes:
     return blake3(b"\x00" + key + value).digest()
 
 
-def _extension_hash(prefix: List[int], child: bytes) -> bytes:
+def _branch_hash(prefix: List[int], left: bytes, right: bytes) -> bytes:
     return blake3(
-        b"\x01" + len(prefix).to_bytes(2, "big") + _pack_padded(prefix) + child
+        b"\x01"
+        + len(prefix).to_bytes(2, "big")
+        + _pack_padded(prefix)
+        + left
+        + right
     ).digest()
-
-
-def _branch_hash(left: bytes, right: bytes) -> bytes:
-    return blake3(b"\x02" + left + right).digest()
 
 
 def test_bytes_to_bit_list_is_msb_first() -> None:
@@ -119,8 +119,8 @@ def test_copy_trie_is_independent() -> None:
 
 def test_single_key_is_a_leaf_at_the_root() -> None:
     """
-    A trie with one key commits to a single leaf, with no extension
-    above it: the leaf carries its full key.
+    A trie with one key commits to a single leaf carrying its full
+    key.
     """
     key = Bytes(b"\x00" + b"\x42" * 32 + b"\x07")
     value = Bytes32(b"\x11" * 32)
@@ -131,11 +131,11 @@ def test_single_key_is_a_leaf_at_the_root() -> None:
     assert root(trie) == _leaf_hash(key, value)
 
 
-def test_keys_sharing_a_stem_split_under_one_extension() -> None:
+def test_keys_sharing_a_stem_split_under_one_branch() -> None:
     """
     Two keys sharing a 33-byte stem diverge in their final byte's
-    first bit: one extension over the whole stem, then a branch over
-    two leaves.
+    first bit: a single branch carrying the whole stem as its prefix,
+    over two leaves.
     """
     stem = b"\x00" + b"\x42" * 32
     low_key = Bytes(stem + b"\x00")
@@ -147,19 +147,17 @@ def test_keys_sharing_a_stem_split_under_one_extension() -> None:
     trie_set(trie, low_key, low_value)
     trie_set(trie, high_key, high_value)
 
-    assert root(trie) == _extension_hash(
+    assert root(trie) == _branch_hash(
         _bits(stem),
-        _branch_hash(
-            _leaf_hash(low_key, low_value),
-            _leaf_hash(high_key, high_value),
-        ),
+        _leaf_hash(low_key, low_value),
+        _leaf_hash(high_key, high_value),
     )
 
 
-def test_first_bit_divergence_has_no_extension() -> None:
+def test_first_bit_divergence_has_empty_prefix() -> None:
     """
-    Keys differing in their first bit branch at the root with no
-    extension above the branch.
+    Keys differing in their first bit branch at the root with an
+    empty prefix.
     """
     zero_key = Bytes(b"\x00" * 34)
     one_key = Bytes(b"\xff" * 66)
@@ -170,17 +168,17 @@ def test_first_bit_divergence_has_no_extension() -> None:
     trie_set(trie, one_key, value)
 
     assert root(trie) == _branch_hash(
-        _leaf_hash(zero_key, value), _leaf_hash(one_key, value)
+        [], _leaf_hash(zero_key, value), _leaf_hash(one_key, value)
     )
 
 
 def test_canonical_form_example() -> None:
     """
-    Three keys sharing a stem, with sub-indices 0, 1, and 128: an
-    extension over the stem, a branch on the first sub-index bit, a
-    six-bit extension and branch over the two low leaves, and the
-    high leaf sitting directly under the top branch with no extension
-    above it.
+    Three keys sharing a stem, with sub-indices 0, 1, and 128: a
+    branch carrying the stem as its prefix, splitting on the first
+    sub-index bit; below it, a branch carrying the next six shared
+    bits over the two low leaves, and the high leaf directly on the
+    other side.
     """
     stem = b"\xff" + b"\xab" * 32
     key_0 = Bytes(stem + b"\x00")
@@ -192,16 +190,13 @@ def test_canonical_form_example() -> None:
     for key in (key_0, key_1, key_128):
         trie_set(trie, key, value)
 
-    low_side = _extension_hash(
+    low_side = _branch_hash(
         [0] * 6,
-        _branch_hash(
-            _leaf_hash(key_0, value),
-            _leaf_hash(key_1, value),
-        ),
+        _leaf_hash(key_0, value),
+        _leaf_hash(key_1, value),
     )
-    assert root(trie) == _extension_hash(
-        _bits(stem),
-        _branch_hash(low_side, _leaf_hash(key_128, value)),
+    assert root(trie) == _branch_hash(
+        _bits(stem), low_side, _leaf_hash(key_128, value)
     )
 
 
@@ -250,21 +245,15 @@ class ReferenceRadixTree:
             self.key = key
             self.value = value
 
-    class Extension:
-        """
-        Compression node of the reference implementation.
-        """
-
-        def __init__(self, prefix: List[int], child: object) -> None:
-            self.prefix = prefix
-            self.child = child
-
     class Branch:
         """
-        Binary branch node of the reference implementation.
+        Prefix-carrying binary branch of the reference implementation.
         """
 
-        def __init__(self, left: object, right: object) -> None:
+        def __init__(
+            self, prefix: List[int], left: object, right: object
+        ) -> None:
+            self.prefix = prefix
             self.left = left
             self.right = right
 
@@ -296,49 +285,41 @@ class ReferenceRadixTree:
                 if bits[position] != other_bits[position]:
                     break
                 run += 1
+            prefix = bits[depth : depth + run]
             leaf = self.Leaf(key, value)
             if bits[depth + run] == 0:
-                branch = self.Branch(leaf, node)
-            else:
-                branch = self.Branch(node, leaf)
-            if run > 0:
-                return self.Extension(bits[depth : depth + run], branch)
-            return branch
+                return self.Branch(prefix, leaf, node)
+            return self.Branch(prefix, node, leaf)
 
-        if isinstance(node, self.Extension):
-            matched = 0
-            while matched < len(node.prefix):
-                position = depth + matched
-                assert position < len(bits)
-                if bits[position] != node.prefix[matched]:
-                    break
-                matched += 1
-            if matched == len(node.prefix):
-                node.child = self._insert(
-                    node.child, bits, key, value, depth + matched
+        matched = 0
+        while matched < len(node.prefix):
+            position = depth + matched
+            assert position < len(bits)
+            if bits[position] != node.prefix[matched]:
+                break
+            matched += 1
+        if matched == len(node.prefix):
+            split = depth + matched
+            assert split < len(bits)
+            if bits[split] == 0:
+                node.left = self._insert(
+                    node.left, bits, key, value, split + 1
                 )
-                return node
-            # Split the extension at the first mismatched bit.
-            remaining = node.prefix[matched + 1 :]
-            if remaining:
-                existing = self.Extension(remaining, node.child)
             else:
-                existing = node.child
-            leaf = self.Leaf(key, value)
-            if bits[depth + matched] == 0:
-                branch = self.Branch(leaf, existing)
-            else:
-                branch = self.Branch(existing, leaf)
-            if matched > 0:
-                return self.Extension(node.prefix[:matched], branch)
-            return branch
-
-        assert depth < len(bits)
-        if bits[depth] == 0:
-            node.left = self._insert(node.left, bits, key, value, depth + 1)
-        else:
-            node.right = self._insert(node.right, bits, key, value, depth + 1)
-        return node
+                node.right = self._insert(
+                    node.right, bits, key, value, split + 1
+                )
+            return node
+        # The key diverges inside the prefix: the surviving branch
+        # keeps the bits after the divergence, and a new branch takes
+        # the bits before it.
+        survivor = self.Branch(
+            node.prefix[matched + 1 :], node.left, node.right
+        )
+        leaf = self.Leaf(key, value)
+        if bits[depth + matched] == 0:
+            return self.Branch(node.prefix[:matched], leaf, survivor)
+        return self.Branch(node.prefix[:matched], survivor, leaf)
 
     def merkelize(self) -> bytes:
         """
@@ -350,10 +331,10 @@ class ReferenceRadixTree:
         def _hash(node: object) -> bytes:
             if isinstance(node, self.Leaf):
                 return _leaf_hash(node.key, node.value)
-            if isinstance(node, self.Extension):
-                return _extension_hash(node.prefix, _hash(node.child))
             assert isinstance(node, self.Branch)
-            return _branch_hash(_hash(node.left), _hash(node.right))
+            return _branch_hash(
+                node.prefix, _hash(node.left), _hash(node.right)
+            )
 
         return _hash(self.root)
 
@@ -370,7 +351,7 @@ def random_entries(rng: random.Random) -> Dict[bytes, bytes]:
         entries[key] = rng.randbytes(32)
 
         # Same first 31 bytes, different final byte: long shared
-        # prefixes compressed by one extension.
+        # prefixes carried by one branch.
         for _ in range(rng.randrange(0, 3)):
             entries[key[:31] + rng.randbytes(1)] = rng.randbytes(32)
 
