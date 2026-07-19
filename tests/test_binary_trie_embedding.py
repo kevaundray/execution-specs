@@ -12,7 +12,7 @@ section; the stem shapes follow the variant.
 import pytest
 from blake3 import blake3
 from ethereum_types.bytes import Bytes, Bytes20, Bytes32
-from ethereum_types.numeric import U256, Uint
+from ethereum_types.numeric import U8, U32, U64, U256, Uint
 
 from ethereum.binary_trie.embedding import (
     ACCOUNT_KEY_LENGTH,
@@ -28,15 +28,16 @@ from ethereum.binary_trie.embedding import (
     STORAGE_KEY_LENGTH,
     STORAGE_ZONE,
     Address32,
+    Zone,
     address20_to_address32,
     chunkify_code,
     encode_basic_data,
+    get_tree_key,
     get_tree_key_for_basic_data,
     get_tree_key_for_code_chunk,
     get_tree_key_for_code_hash,
     get_tree_key_for_storage_slot,
     key_hash,
-    zone_stem,
 )
 from ethereum.state import EMPTY_CODE_HASH as MPT_STATE_EMPTY_CODE_HASH
 
@@ -98,25 +99,25 @@ def test_key_hash_is_blake3() -> None:
     assert key_hash(ADDRESS) == blake3(bytes(ADDRESS)).digest()
 
 
-def test_zone_stem_prepends_zone_byte() -> None:
+def test_get_tree_key_concatenates_its_three_parts() -> None:
     """
-    A zone stem is the zone byte followed by the whole digest,
-    nothing truncated.
+    A key is the zone byte, the whole hash-derived position, and the
+    sub-index byte — nothing truncated.
     """
     digest = blake3(b"digest").digest()
     for zone in (0, 1, 2, 254, 255):
-        stem = zone_stem(Uint(zone), digest)
-        assert len(stem) == 33
-        assert stem == bytes([zone]) + digest
+        key = get_tree_key(Zone(zone), digest, U8(7))
+        assert len(key) == 34
+        assert key == bytes([zone]) + digest + b"\x07"
 
 
-def test_zone_stem_rejects_zone_wider_than_one_byte() -> None:
+def test_zone_wider_than_one_byte_is_unrepresentable() -> None:
     """
-    A zone identifier that does not fit in the zone byte is rejected.
+    A zone identifier that does not fit in the zone byte fails at
+    construction: the type is one byte wide.
     """
-    digest = blake3(b"digest").digest()
-    with pytest.raises(AssertionError):
-        zone_stem(Uint(256), digest)
+    with pytest.raises(OverflowError):
+        Zone(256)
 
 
 def test_header_key_vectors() -> None:
@@ -300,8 +301,8 @@ def test_encode_basic_data_layout() -> None:
     balance_hex = "0123456789abcdef0123456789abcdef"
 
     value = encode_basic_data(
-        code_size=Uint(int(code_size_hex, 16)),
-        nonce=Uint(int(nonce_hex, 16)),
+        code_size=U32(int(code_size_hex, 16)),
+        nonce=U64(int(nonce_hex, 16)),
         balance=U256(int(balance_hex, 16)),
     )
 

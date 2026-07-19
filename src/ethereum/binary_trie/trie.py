@@ -107,6 +107,22 @@ logical **stem**/sub-index split, are fixed by
 [`ethereum.binary_trie.embedding`]: ref:ethereum.binary_trie.embedding
 """
 
+MAX_KEY_LENGTH = Uint(8192)
+"""
+Longest key the tree accepts, in bytes.
+
+The bound is derived from the prefix encoding: a branch prefix can
+approach the full bit length of the keys sharing it, and
+[`encode_bit_prefix`] stores the bit count in two bytes, so keys
+longer than this could produce a prefix the encoding cannot
+represent. Enforcing the bound on every key in [`trie_set`] keeps
+the limit a stated contract instead of a data-dependent failure
+during merkleization.
+
+[`encode_bit_prefix`]: ref:ethereum.binary_trie.trie.encode_bit_prefix
+[`trie_set`]: ref:ethereum.binary_trie.trie.trie_set
+"""
+
 LEAF_NODE_TAG = Bytes(b"\x00")
 """
 First byte of every [`LeafNode`] hash preimage.
@@ -172,9 +188,13 @@ class BranchNode:
 
     prefix: Bytes
     """
-    Run of bits shared by every key below this branch, one bit per
-    byte, in consumption order; empty when the keys diverge
-    immediately.
+    The compressed run of bits shared by every key below this branch,
+    one bit per byte, in consumption order; empty when the keys
+    diverge immediately.
+
+    The run is **relative**: it holds only the bits between the
+    parent's split point and this branch's split bit, never the path
+    from the root, which is reconstructed by the walk down.
     """
 
     left: "BinaryNode"
@@ -235,6 +255,7 @@ def trie_set(trie: BinaryTrie, key: Key, value: Bytes32) -> None:
     [`Key`]: ref:ethereum.binary_trie.trie.Key
     """
     assert len(key) >= 1
+    assert Uint(len(key)) <= MAX_KEY_LENGTH
     assert len(value) == 32
     trie._data[key] = value
 
@@ -255,7 +276,16 @@ def encode_bit_prefix(prefix: Bytes) -> Bytes:
     The explicit count keeps the encoding injective: without it, two
     prefixes differing only by trailing zero bits would pack to the
     same bytes and two different trees could share a root.
+
+    Two bytes suffice because a prefix cannot outgrow the bit length
+    of the keys sharing it, and [`trie_set`] bounds every key at
+    [`MAX_KEY_LENGTH`]; the assert here is a backstop restating that
+    derivation.
+
+    [`trie_set`]: ref:ethereum.binary_trie.trie.trie_set
+    [`MAX_KEY_LENGTH`]: ref:ethereum.binary_trie.trie.MAX_KEY_LENGTH
     """
+    assert len(prefix) < 2**16
     packed = bytearray((len(prefix) + 7) // 8)
     for bit_index, bit in enumerate(prefix):
         packed[bit_index // 8] |= bit << (7 - bit_index % 8)
@@ -294,10 +324,13 @@ def binarize(entries: Mapping[Key, Bytes32], depth: Uint) -> BinaryNode:
     [`BranchNode`]: ref:ethereum.binary_trie.trie.BranchNode
     """
     assert len(entries) > 0
+    # If there is only one key, value in the trie
+    # then we return it as a leaf node
     if len(entries) == 1:
-        (key,) = entries
-        return LeafNode(key, entries[key])
+        ((key, value),) = entries.items()
+        return LeafNode(key, value)
 
+    # Maps keys to their bitlist
     bit_lists = {key: bytes_to_bit_list(key) for key in entries}
 
     prefix_length = Uint(0)
@@ -310,6 +343,8 @@ def binarize(entries: Mapping[Key, Bytes32], depth: Uint) -> BinaryNode:
         bits_at_position = {
             bit_list[position] for bit_list in bit_lists.values()
         }
+        # check if more than one of the keys have the same bit at position
+        # If two or more keys share the same bit, then we stop the loop
         if len(bits_at_position) > 1:
             break
         prefix_length += Uint(1)

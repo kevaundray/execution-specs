@@ -130,11 +130,14 @@ def test_trie_set_and_get() -> None:
 
 def test_trie_set_rejects_malformed_inputs() -> None:
     """
-    Empty keys and values that are not 32 bytes are rejected.
+    Empty keys, keys past the maximum length, and values that are not
+    32 bytes are rejected.
     """
     trie = BinaryTrie()
     with pytest.raises(AssertionError):
         trie_set(trie, Bytes(b""), Bytes32(b"\x01" * 32))
+    with pytest.raises(AssertionError):
+        trie_set(trie, Bytes(b"\x01" * 8193), Bytes32(b"\x01" * 32))
     with pytest.raises(AssertionError):
         trie_set(
             trie,
