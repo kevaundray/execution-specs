@@ -17,12 +17,17 @@ from typing import Dict, List, Optional
 import pytest
 from blake3 import blake3
 from ethereum_types.bytes import Bytes, Bytes32
+from ethereum_types.numeric import Uint
 
 from ethereum.binary_trie.trie import (
     EMPTY_TRIE_ROOT,
     BinaryTrie,
+    BranchNode,
+    LeafNode,
+    binarize,
     bytes_to_bit_list,
     copy_trie,
+    encode_bit_prefix,
     root,
     trie_get,
     trie_set,
@@ -72,6 +77,31 @@ def test_bytes_to_bit_list_is_msb_first() -> None:
     )
 
 
+def test_encode_bit_prefix_layout() -> None:
+    """
+    A prefix encodes as a two-byte big-endian bit count followed by
+    the bits packed most significant bit first, zero padded to a byte
+    boundary.
+    """
+    assert encode_bit_prefix(Bytes(b"")) == b"\x00\x00"
+    assert encode_bit_prefix(Bytes(bytes([1, 0, 1]))) == b"\x00\x03\xa0"
+    # Nine bits cross a byte boundary into a zero-padded second byte.
+    assert encode_bit_prefix(Bytes(bytes([1] * 9))) == b"\x00\x09\xff\x80"
+
+
+def test_encode_bit_prefix_counts_trailing_zero_bits() -> None:
+    """
+    Prefixes differing only by trailing zero bits pack to the same
+    bytes; the explicit count is what keeps their encodings — and so
+    the roots committing to them — distinct.
+    """
+    shorter = Bytes(bytes([0, 1, 1, 0]))
+    longer = Bytes(bytes([0, 1, 1, 0, 0]))
+
+    assert encode_bit_prefix(shorter)[2:] == encode_bit_prefix(longer)[2:]
+    assert encode_bit_prefix(shorter) != encode_bit_prefix(longer)
+
+
 def test_empty_trie_root_is_all_zeros() -> None:
     """
     An empty trie commits to 32 zero bytes.
@@ -96,6 +126,21 @@ def test_trie_set_and_get() -> None:
     replacement = Bytes32(b"\x03" * 32)
     trie_set(trie, key, replacement)
     assert trie_get(trie, key) == replacement
+
+
+def test_trie_set_rejects_malformed_inputs() -> None:
+    """
+    Empty keys and values that are not 32 bytes are rejected.
+    """
+    trie = BinaryTrie()
+    with pytest.raises(AssertionError):
+        trie_set(trie, Bytes(b""), Bytes32(b"\x01" * 32))
+    with pytest.raises(AssertionError):
+        trie_set(
+            trie,
+            Bytes(b"\x01"),
+            Bytes(b"\x02" * 31),  # type: ignore[arg-type]
+        )
 
 
 def test_copy_trie_is_independent() -> None:
@@ -198,6 +243,37 @@ def test_canonical_form_example() -> None:
     assert root(trie) == _branch_hash(
         _bits(stem), low_side, _leaf_hash(key_128, value)
     )
+
+
+def test_binarize_builds_relative_prefixes_and_full_key_leaves() -> None:
+    """
+    Branch prefixes are relative — only the bits shared beyond the
+    parent's split point — while leaves commit their complete keys
+    wherever they sit in the tree.
+    """
+    stem = b"\xff" + b"\xab" * 32
+    key_0 = Bytes(stem + b"\x00")
+    key_1 = Bytes(stem + b"\x01")
+    key_128 = Bytes(stem + b"\x80")
+    value = Bytes32(b"\x44" * 32)
+
+    top = binarize({key_0: value, key_1: value, key_128: value}, Uint(0))
+
+    assert isinstance(top, BranchNode)
+    assert top.prefix == bytes_to_bit_list(Bytes(stem))
+
+    low = top.left
+    assert isinstance(low, BranchNode)
+    # Relative to the split above it, not 271 bits from the root.
+    assert low.prefix == Bytes(bytes([0] * 6))
+    assert isinstance(low.left, LeafNode)
+    assert isinstance(low.right, LeafNode)
+    assert low.left.key == key_0
+    assert low.right.key == key_1
+
+    high = top.right
+    assert isinstance(high, LeafNode)
+    assert high.key == key_128
 
 
 def test_zero_value_is_not_absence() -> None:
@@ -435,3 +511,62 @@ def test_root_is_insertion_order_independent() -> None:
         trie_set(backward, key, value)
 
     assert root(forward) == root(backward)
+
+
+def test_reference_roots_are_insertion_order_independent() -> None:
+    """
+    The insertion-based reference converges to the same canonical
+    structure whatever order keys arrive in.
+
+    The rebuild-based spec is order-independent trivially; for the
+    incremental reference it is the canonicity property — splits
+    happening in different sequences must produce one structure.
+    """
+    rng = random.Random(3102)
+
+    for trial in range(10):
+        entries = list(random_entries(rng).items())
+
+        trie = BinaryTrie()
+        for key, value in entries:
+            trie_set(trie, Bytes(key), Bytes32(value))
+        expected = root(trie)
+
+        for _ in range(3):
+            rng.shuffle(entries)
+            reference = ReferenceRadixTree()
+            for key, value in entries:
+                reference.insert(key, value)
+            assert reference.merkelize() == expected, f"trial {trial}"
+
+
+def test_overwriting_a_value_recommits_to_the_final_value() -> None:
+    """
+    Overwriting a key's value changes the root and matches a trie
+    that only ever held the final value; the insertion-based
+    reference reaches the same root through its equal-key path.
+    """
+    stem = b"\x00" + b"\x42" * 32
+    key = Bytes(stem + b"\x07")
+    neighbour = Bytes(stem + b"\x08")
+    first = Bytes32(b"\x01" * 32)
+    second = Bytes32(b"\x02" * 32)
+
+    overwritten = BinaryTrie()
+    trie_set(overwritten, key, first)
+    trie_set(overwritten, neighbour, first)
+    old_root = root(overwritten)
+    trie_set(overwritten, key, second)
+
+    fresh = BinaryTrie()
+    trie_set(fresh, key, second)
+    trie_set(fresh, neighbour, first)
+
+    reference = ReferenceRadixTree()
+    reference.insert(key, first)
+    reference.insert(neighbour, first)
+    reference.insert(key, second)
+
+    assert root(overwritten) != old_root
+    assert root(overwritten) == root(fresh)
+    assert reference.merkelize() == root(fresh)
