@@ -2,6 +2,8 @@
 The raw key/value tree underlying the [EIP-8297] Partitioned Binary
 Tree, structured as a compressed binary radix trie.
 
+TODO: 8297 still copies UBT and has stem nodes.
+
 The tree maps variable-length keys to 32-byte values and commits to
 its entire contents with a single root hash. Keys are consumed bit by
 bit, most significant bit first, and must be prefix-free; see
