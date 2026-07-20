@@ -89,6 +89,16 @@ def test_encode_bit_prefix_layout() -> None:
     assert encode_bit_prefix(Bytes(bytes([1] * 9))) == b"\x00\x09\xff\x80"
 
 
+def test_encode_bit_prefix_rejects_unrepresentable_counts() -> None:
+    """
+    A prefix whose bit count does not fit the two-byte field is
+    rejected; `trie_set`'s key-length bound keeps this unreachable in
+    practice, so the assert is exercised directly.
+    """
+    with pytest.raises(AssertionError):
+        encode_bit_prefix(Bytes(bytes(2**16)))
+
+
 def test_encode_bit_prefix_counts_trailing_zero_bits() -> None:
     """
     Prefixes differing only by trailing zero bits pack to the same

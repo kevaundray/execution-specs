@@ -358,6 +358,7 @@ def get_tree_key_for_code_chunk(
 
 # Noting: code is deduplicated but not the first 4KB
 
+
 # Open decision about where metadata will be stored, like cold/hot
 # and even key expiry. Should these items be stored via a sub-index,
 # or should the tree know about this: ie we may have branch nodes

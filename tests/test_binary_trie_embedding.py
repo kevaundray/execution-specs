@@ -36,6 +36,7 @@ from ethereum.binary_trie.embedding import (
     get_tree_key_for_basic_data,
     get_tree_key_for_code_chunk,
     get_tree_key_for_code_hash,
+    get_tree_key_for_header,
     get_tree_key_for_storage_slot,
     key_hash,
 )
@@ -118,6 +119,15 @@ def test_zone_wider_than_one_byte_is_unrepresentable() -> None:
     """
     with pytest.raises(OverflowError):
         Zone(256)
+
+
+def test_header_sub_index_wider_than_one_byte_is_rejected() -> None:
+    """
+    A header sub-index that does not fit the key's final byte fails
+    at the narrowing to one byte inside the derivation.
+    """
+    with pytest.raises(OverflowError):
+        get_tree_key_for_header(ADDRESS, Uint(256))
 
 
 def test_header_key_vectors() -> None:
@@ -312,3 +322,16 @@ def test_encode_basic_data_layout() -> None:
     assert value[4:8] == bytes.fromhex(code_size_hex)
     assert value[8:16] == bytes.fromhex(nonce_hex)
     assert value[16:32] == bytes.fromhex(balance_hex)
+
+
+def test_encode_basic_data_rejects_balance_past_sixteen_bytes() -> None:
+    """
+    A balance that does not fit the sixteen-byte field is rejected,
+    rather than silently truncated by `to_bytes`.
+    """
+    with pytest.raises(AssertionError):
+        encode_basic_data(
+            code_size=U32(0),
+            nonce=U64(0),
+            balance=U256(2) ** U256(128),
+        )
