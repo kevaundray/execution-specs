@@ -230,6 +230,15 @@ class BinaryTrie:
     the canonical compressed form automatic. Clients are expected to
     keep nodes and update hashes incrementally instead.
 
+    There is deliberately no delete operation. A key's value can only
+    be set or overwritten; writing 32 zero bytes stores that value
+    like any other rather than removing the key, so a zero-valued
+    leaf still commits to a different root than an absent one. Nothing
+    in the EVM state transition removes tree entries, so no canonical
+    form-restoring merge (folding a lone surviving child back into its
+    parent) is ever needed here; removing entries is left to a future
+    state-expiry mechanism.
+
     [`root`]: ref:ethereum.binary_trie.trie.root
     """
 

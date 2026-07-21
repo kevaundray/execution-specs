@@ -212,6 +212,13 @@ def address20_to_address32(address: Bytes20) -> Address32:
 def key_hash(data: Bytes) -> Hash32:
     """
     Hash `data` for use in tree key derivation.
+
+    This is the tree's own merkelization hash, [`blake3_hash`], and not
+    a separate choice: key derivation and node hashing are one function
+    by design, so a future change to the tree's hash carries key
+    derivation with it automatically.
+
+    [`blake3_hash`]: ref:ethereum.binary_trie.trie.blake3_hash
     """
     return blake3_hash(data)
 
@@ -271,7 +278,13 @@ def storage_tree_position(address: Address32, tree_index: U256) -> Bytes:
     groups within that subtree. Binding both digests to the address
     stops storage keys ground to sit close together from being reused
     against a different contract.
-    """
+
+    `key_hash(address)` is the same digest [`get_tree_key_for_header`]
+    uses for the account's header stem; the two never collide because
+    they sit in different zones, differing in the key's first byte.
+
+    [`get_tree_key_for_header`]: ref:ethereum.binary_trie.embedding.get_tree_key_for_header
+    """  # noqa: E501
     # The first hash creates the per-account bucket; the second is
     # salted with the address so ground clusters do not transfer.
     prefix = key_hash(address)
@@ -290,6 +303,11 @@ def get_tree_key_for_storage_slot(
     slots are the hottest — compilers allocate scalar fields from
     slot `0` — so keeping them in the header lets a transaction open
     one branch for an account's basic data and hot storage together.
+
+    Group `0` (`tree_index == 0`) is the exception to the 256-wide
+    grouping: slots `0`-`63` are diverted to the header, so group `0`'s
+    storage-zone leaves are only sub-indices `64`-`255`, 192 slots
+    rather than the full 256 every later group has.
     # TODO: still need to check why first 64
     """
     if storage_key < U256(CODE_OFFSET - HEADER_STORAGE_OFFSET):
@@ -330,6 +348,11 @@ def get_tree_key_for_code_chunk(
     There is no separate code commitment: every chunk is an ordinary
     leaf under the state root, so proving one chunk takes a single
     branch and never requires the rest of the code.
+
+    Content addressing shares leaves only when `code_hash` values
+    match, so its dedup relies on Keccak's collision resistance for
+    `code_hash` as well as [`key_hash`]'s: two distinct bytecodes that
+    collided under Keccak would share overflow chunks.
 
     `chunk_id` needs no bound of its own: the derivation handles any
     index through overflow groups, and the real limit comes from the
@@ -416,6 +439,11 @@ def encode_basic_data(code_size: U32, nonce: U64, balance: U256) -> Bytes32:
     by [EIP-2681]. Balances are protocol-level `U256` values, so the
     parameter keeps that type and the sixteen-byte field bound is
     asserted here instead.
+
+    `code_size` is deliberately four bytes at offset four here, one
+    byte wider than EIP-7864's three-byte field at offset five; the
+    fourth reserved byte is spent on this widening rather than left
+    unused.
 
     [`BASIC_DATA_LEAF_KEY`]: ref:ethereum.binary_trie.embedding.BASIC_DATA_LEAF_KEY
     [EIP-2681]: https://eips.ethereum.org/EIPS/eip-2681
