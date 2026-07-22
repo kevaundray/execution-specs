@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EIP-7864: Ethereum state using a unified binary tree</title>
+<style>
+  :root {
+    --bg: #F7F8FA; --surface: #FFFFFF; --ink: #1C2330; --ink-soft: #4A5568;
+    --ink-faint: #8A94A6; --rule: #DCE1E8; --accent: #0E7A6E;
+    --code-bg: #EEF1F5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171C; --surface: #1B1F26; --ink: #E2E7EE; --ink-soft: #A8B2C1;
+      --ink-faint: #6C7686; --rule: #2C323C; --accent: #52C2B2;
+      --code-bg: #21262F;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171C; --surface: #1B1F26; --ink: #E2E7EE; --ink-soft: #A8B2C1;
+    --ink-faint: #6C7686; --rule: #2C323C; --accent: #52C2B2;
+    --code-bg: #21262F;
+  }
+  :root[data-theme="light"] {
+    --bg: #F7F8FA; --surface: #FFFFFF; --ink: #1C2330; --ink-soft: #4A5568;
+    --ink-faint: #8A94A6; --rule: #DCE1E8; --accent: #0E7A6E;
+    --code-bg: #EEF1F5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: Charter, "Bitstream Charter", "Iowan Old Style", Georgia, serif;
+    font-size: 1.0625rem; line-height: 1.65;
+  }
+  main { max-width: 68ch; margin: 0 auto; padding: 2.5rem 1.5rem 5rem; }
+  .eyebrow {
+    font-family: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    text-transform: uppercase; letter-spacing: 0.11em; font-size: 0.75rem;
+    font-weight: 600; color: var(--accent); margin: 0 0 0.5rem;
+  }
+  .backlink {
+    font-family: -apple-system, system-ui, sans-serif; font-size: 0.8rem;
+    margin-bottom: 2rem; display: block;
+  }
+  h1, h2, h3, h4 {
+    font-family: -apple-system, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+    text-wrap: balance; line-height: 1.2; letter-spacing: -0.015em;
+  }
+  h1 { font-size: 1.9rem; font-weight: 700; margin: 0 0 0.75rem; }
+  h2 { font-size: 1.4rem; font-weight: 650; margin: 3rem 0 0.9rem;
+       padding-top: 1.4rem; border-top: 1px solid var(--rule); }
+  h3 { font-size: 1.08rem; font-weight: 650; margin: 2rem 0 0.6rem; }
+  h4 { font-size: 0.98rem; font-weight: 650; margin: 1.6rem 0 0.5rem; }
+  p { margin: 0 0 1.05rem; }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+               font-size: 0.86em; }
+  code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
+  pre { background: var(--code-bg); border: 1px solid var(--rule); border-radius: 8px;
+        padding: 0.9rem 1.1rem; overflow-x: auto; line-height: 1.55; margin: 0 0 1.05rem; }
+  pre code { background: none; padding: 0; }
+  .tablewrap { overflow-x: auto; margin: 0 0 1.05rem; }
+  table {
+    border-collapse: collapse; width: 100%;
+    font-family: -apple-system, "SF Pro Text", system-ui, sans-serif;
+    font-size: 0.875rem;
+  }
+  th, td { text-align: left; padding: 0.5rem 0.9rem 0.5rem 0;
+           border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em;
+       color: var(--ink-faint); font-weight: 600; }
+  img { max-width: 100%; height: auto; border: 1px solid var(--rule); border-radius: 8px; }
+  ul, ol { margin: 0 0 1.05rem; padding-left: 1.4rem; }
+  li { margin-bottom: 0.35rem; }
+  li::marker { color: var(--ink-faint); }
+  .frontmatter {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.78rem;
+    color: var(--ink-soft); border: 1px solid var(--rule); border-radius: 8px;
+    padding: 0.9rem 1.1rem; margin: 0 0 2rem; overflow-x: auto;
+  }
+  .frontmatter dt { color: var(--ink-faint); float: left; clear: left;
+                    width: 8.5rem; }
+  .frontmatter dd { margin-left: 9rem; margin-bottom: 0.2rem; }
+  .frontmatter dl { margin: 0; }
+  blockquote { border-left: 3px solid var(--rule); margin: 0 0 1.05rem;
+               padding: 0.1rem 0 0.1rem 1.1rem; color: var(--ink-soft); }
+</style>
+</head>
+<body>
+<main>
+<p class="eyebrow">Local snapshot &middot; fetched 2026-07-14 from ethereum/EIPs (post-PR-11832 partitioned rewrite)</p>
+<a class="backlink" href="./index.html">&larr; Back to binary trie implementation notes</a>
+<h1>EIP-7864: Ethereum state using a unified binary tree</h1><div class="frontmatter"><dl><dt>eip</dt><dd>7864</dd><dt>title</dt><dd>Ethereum state using a unified binary tree</dd><dt>author</dt><dd>Vitalik Buterin (@vbuterin), Guillaume Ballet (@gballet), Dankrad Feist (@dankrad), Ignacio Hagopian (@jsign), Kevaundray Wedderburn (@kevaundray), Tanishq Jasoria (@tanishqjasoria), Gajinder Singh (@g11tech), Danno Ferrin (@shemnon), Piper Merriam (@pipermerriam), Gottfried Herold (@GottfriedHerold)</dd><dt>status</dt><dd>Draft</dd><dt>type</dt><dd>Standards Track</dd><dt>category</dt><dd>Core</dd><dt>created</dt><dd>2025-01-20</dd></dl></div>
+<h2 id="abstract">Abstract</h2>
+<p>Introduce a new binary state tree, intended to replace the hexary patricia trees. Account headers, contract code and storage are stored in a single logical tree. Account data is broken into independent leaves which  are grouped by 256 in order to provide some locality. The tree is also grouped by storage type (headers vs code vs storage), to enable separate syncing and distinct treatment of different types of storage that in the future will have different properties.</p>
+<p>Note: The hash function used in the current draft is not final. The current implementation uses BLAKE3 to reduce friction for EL clients experimenting with this EIP, but the final decision remains TBD. Other potential candidates include Keccak and Poseidon2. </p>
+<p>For Poseidon2, there's an ongoing Ethereum Foundation cryptography initiative assessing its security properties. If Poseidon2 is selected, additional specifications will be needed for field selection (BN254 scalar field, 31-bit field elements, etc.) and encoding 32-byte values into field elements.</p>
+<p>The hash function can be switched with minimal impact on implementations as this EIP progresses toward acceptance. <strong>Do not</strong> assume BLAKE3 is a final decision.</p>
+<h2 id="motivation">Motivation</h2>
+<p>Ethereum's long-term goal is to allow blocks to be proved with validity proof so that chain verification is as simple and fast as possible. One of the most challenging parts of achieving that goal is proving the state of the tree, which is required for EVM execution.</p>
+<p>The current Merkle-Patricia Trie (MPT) design isn't friendly to validity proofs for many reasons, such as using RLP for node encoding, Keccak as a hashing function, being a "tree of trees", and not including accounts code as part of the state.</p>
+<p>Apart from requiring a state tree design that is friendly for block validity proofs, it's also important to have fast and small regular Merkle proofs when the amount of state to prove is small. This is useful not only for the application layer but also for supporting future protocol needs in a stateless world (e.g: inclusion lists).</p>
+<p>Regarding these regular Merkle proofs in an MPT, since it's a hexary tree, their size is quite big on average and in worst-case scenarios. Given a 2^32 size tree, the expected size for proving a single branch is <code>15 * 32 * log_16(2^32) = 3840</code>. From a worst-case block perspective, if 30M gas is used to access only a single byte of different account codes since this code isn't chunkified, we'd need <code>30M/2400*(5*480+24k)=330MB</code>.</p>
+<p>A binary tree has a good balance between out-of-circuit and in-circuit proving. Since the tree arity is two, this reduces the size of regular Merkle proofs (i.e., <code># siblings * log_arity(N)</code> for arity 2 is better than for arity 16). Moreover, we propose switching from Keccak to a more proving-friendly hash function, which would be more amenable to modern proving systems.</p>
+<h2 id="specification">Specification</h2>
+<p>The keywords "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in RFC 2119 and RFC 8174.</p>
+<h3 id="notable-changes-from-the-hexary-structure">Notable changes from the hexary structure</h3>
+<ul>
+<li>The account and storage tries are merged into a single trie.</li>
+<li>RLP is no longer used.</li>
+<li>The account's code is chunked and included in the tree.</li>
+<li>Account data (e.g., balance, nonce, first storage slots, first code-chunks) is co-located in the tree to reduce branch openings.</li>
+<li>All state of the same type (eg. headers, code, storage) is stored together.</li>
+</ul>
+<h3 id="tree-structure">Tree structure</h3>
+<p>The proposed Binary Tree stores key-value entries where the key is bytes (arbitrary length, but this EIP guarantees that it will be prefix-free) and the value is bytes32. The first byte of the tree denotes storage type, the next bytes of the key define the entry stem, and the last byte is the subindex in that stem. If two keys have the same stem, they live in the same "big branch" — this co-locates groups of 256 keys (i.e: keys with the same first 31-bytes).</p>
+<p><img alt="Image" src="https://eips.ethereum.org/assets/eip-7864/diagram2.png">
+(More details about the purple/orange part in the "Tree embedding" section)</p>
+<p>We can distinguish four node types:</p>
+<ul>
+<li><code>InternalNode</code> has a <code>left_hash</code> and <code>right_hash</code> field (black).</li>
+<li><code>StemNode</code> has fields <code>stem</code>, <code>left_hash</code> and <code>right_hash</code> (blue).</li>
+<li><code>LeafNode</code> has a field <code>value</code> which is a 32-byte blob or <code>empty</code>. (orange).</li>
+<li><code>EmptyNode</code> represents an empty node/sub-tree.</li>
+</ul>
+<p>The path to a <code>StemNode</code> is defined by the key's first N-8 bits (N-1 bytes) from MSB to LSB. From this node, a subtree of 256 values exists indexed by the key's last byte (8 bits). A newly created <code>StemNode</code> subtree (i.e: 256 values) has all leaves with <code>value: empty</code>.</p>
+<p>The path length isn't 248-bits, but contains the minimal amount of <code>InternalNodes</code> required if other stems exist with the same prefix. As in, when walking the 248-bit path inserting a new <code>StemNode</code>, you can end on a <code>EmptyNode</code> or <code>StemNode</code>. In the former, you replace it with the new <code>StemNode</code>. In the latter, you create as many <code>InternalNodes</code> as common bits both stems have as prefixes. Another way to look at this is that there aren't <em>extension nodes</em> in paths, but we use the minimal amount of <code>InternalNodes</code> to place <code>StemNode</code>s with common prefixes.</p>
+<p>Below is an implementation that describes the tree structure:</p>
+<pre><code class="language-python">class StemNode:
+    def __init__(self, stem: bytes):
+        self.stem = stem
+        self.values: list[Optional[bytes]] = [None] * 256
+
+    def set_value(self, index: int, value: bytes):
+        self.values[index] = value
+
+class InternalNode:
+    def __init__(self):
+        self.left = None
+        self.right = None
+
+class BinaryTree:
+    def __init__(self):
+        self.root = None
+
+    def insert(self, key: bytes, value: bytes):
+        assert len(value) == 32, &quot;value must be 32 bytes&quot;
+        stem = key[:-1]
+        subindex = key[-1]
+
+        if self.root is None:
+            self.root = StemNode(stem)
+            self.root.set_value(subindex, value)
+            return
+
+        self.root = self._insert(self.root, stem, subindex, value, 0)
+
+    def _insert(self, node, stem, subindex, value, depth):
+
+        if node is None:
+            node = StemNode(stem)
+            node.set_value(subindex, value)
+            return node
+
+        stem_bits = self._bytes_to_bits(stem)
+        if isinstance(node, StemNode):
+            # If the stem already exists, update the value.
+            if node.stem == stem:
+                node.set_value(subindex, value)
+                return node
+            existing_stem_bits = self._bytes_to_bits(node.stem)
+            return self._split_leaf(
+                node, stem_bits, existing_stem_bits, subindex, value, depth
+            )
+
+        # We're in an internal node, go left or right based on the bit.
+        bit = stem_bits[depth]
+        if bit == 0:
+            node.left = self._insert(node.left, stem, subindex, value, depth + 1)
+        else:
+            node.right = self._insert(node.right, stem, subindex, value, depth + 1)
+        return node
+
+    def _split_leaf(self, leaf, stem_bits, existing_stem_bits, subindex, value, depth):
+        # If the stem bits are the same up to this depth, we need to create another
+        # internal node and recurse.
+        if stem_bits[depth] == existing_stem_bits[depth]:
+            new_internal = InternalNode()
+            bit = stem_bits[depth]
+            if bit == 0:
+                new_internal.left = self._split_leaf(
+                    leaf, stem_bits, existing_stem_bits, subindex, value, depth + 1
+                )
+            else:
+                new_internal.right = self._split_leaf(
+                    leaf, stem_bits, existing_stem_bits, subindex, value, depth + 1
+                )
+            return new_internal
+        else:
+            new_internal = InternalNode()
+            bit = stem_bits[depth]
+            stem = self._bits_to_bytes(stem_bits)
+            if bit == 0:
+                new_internal.left = StemNode(stem)
+                new_internal.left.set_value(subindex, value)
+                new_internal.right = leaf
+            else:
+                new_internal.right = StemNode(stem)
+                new_internal.right.set_value(subindex, value)
+                new_internal.left = leaf
+            return new_internal
+</code></pre>
+<h3 id="node-merkelization">Node merkelization</h3>
+<p>Define <code>hash(value)</code> as:</p>
+<ul>
+<li><code>hash([0x00] * 64) = [0x00] * 32</code></li>
+<li><code>hash(value) = H(value)</code>, where H is the selected cryptographic hash function.</li>
+</ul>
+<p>The <code>value</code> parameter lengths can only be 32 and 64.</p>
+<p>Merkelize each node type as follows:</p>
+<ul>
+<li><code>internal_node_hash = hash(left_hash || right_hash)</code></li>
+<li><code>stem_node_hash = hash(stem || 0x00 || hash(left_hash || right_hash))</code></li>
+<li><code>leaf_node_hash = hash(value)</code></li>
+<li><code>empty_node_hash = [0x00] * 32</code></li>
+</ul>
+<p>Below is an implementation of these rules using BLAKE3 as a reference implementation:</p>
+<pre><code class="language-python">def _hash(self, data):
+    if data in (None, b&quot;\x00&quot; * 64):
+        return b&quot;\x00&quot; * 32
+
+    assert len(data) == 64 or len(data) == 32, &quot;data must be 32 or 64 bytes&quot;
+    return blake3(data).digest()  # This will be replaced with the final hash function
+
+def merkelize(self):
+    def _merkelize(node):
+        if node is None:
+            return b&quot;\x00&quot; * 32
+        if isinstance(node, InternalNode):
+            left_hash = _merkelize(node.left)
+            right_hash = _merkelize(node.right)
+            return self._hash(left_hash + right_hash)
+
+        level = [self._hash(x) for x in node.values]
+        while len(level) &gt; 1:
+            new_level = []
+            for i in range(0, len(level), 2):
+                new_level.append(self._hash(level[i] + level[i + 1]))
+            level = new_level
+
+        return self._hash(node.stem + b&quot;\0&quot; + level[0])
+
+    return _merkelize(self.root)
+</code></pre>
+<h3 id="tree-embedding">Tree embedding</h3>
+<p>Instead of a two-layer structure like the MPT, we will embed all information into a unique <code>key: value</code> space in the proposed single tree. This section specifies which tree keys store the state's information (account header data, code, storage). The data is colocated in such way that each state type is stored separately, and data that is usually accessed together lives in the same <code>StemNode</code> which reduces branch openings.</p>
+<p>The following is a big picture of what we'll continue to describe in the rest of this section:</p>
+<p><img alt="Image" src="https://eips.ethereum.org/assets/eip-7864/diagram1.png"></p>
+<p>The account stem (green <code>account</code> node) contains accounts basic data, first 64-storage slots, and first 128-code chunks. This co-location of data allows having data in a single stem branch that is usually accessed together. The rest of storage slots and code-chunks are spread into groups of 256 values in the rest of the tree -- this is also done for convenience since slots/code-chunks that are close together will share the same stem branch.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>HEADER_SUBTREE</td>
+<td>0</td>
+</tr>
+<tr>
+<td>CODE_SUBTREE</td>
+<td>1</td>
+</tr>
+<tr>
+<td>STORAGE_SUBTREE</td>
+<td>255</td>
+</tr>
+<tr>
+<td>BASIC_DATA_LEAF_KEY</td>
+<td>0</td>
+</tr>
+<tr>
+<td>CODE_HASH_LEAF_KEY</td>
+<td>1</td>
+</tr>
+<tr>
+<td>HEADER_STORAGE_OFFSET</td>
+<td>20</td>
+</tr>
+<tr>
+<td>CODE_OFFSET</td>
+<td>4</td>
+</tr>
+<tr>
+<td>CODE_CHUNKS_IN_HEADER</td>
+<td>16</td>
+</tr>
+<tr>
+<td>STORAGE_CHUNKS_IN_HEADER</td>
+<td>4</td>
+</tr>
+<tr>
+<td>STEM_SUBTREE_WIDTH</td>
+<td>256</td>
+</tr>
+<tr>
+<td>MAIN_STORAGE_OFFSET</td>
+<td>256**31</td>
+</tr>
+</tbody>
+</table></div>
+<p><em>It's a required invariant that <code>STEM_SUBTREE_WIDTH &gt; CODE_OFFSET &gt; HEADER_STORAGE_OFFSET</code> and that <code>HEADER_STORAGE_OFFSET</code> is greater than the leaf keys. Additionally, <code>MAIN_STORAGE_OFFSET</code> MUST be a power of <code>STEM_SUBTREE_WIDTH</code>.</em></p>
+<p>Note that addresses are always passed around as an <code>Address32</code>. To convert existing addresses to <code>Address32</code>, prepend with 12 zero bytes:</p>
+<pre><code class="language-python">def old_style_address_to_address32(address: Address) -&gt; Address32:
+    return b'\\x00' * 12 + address
+</code></pre>
+<h3 id="header-values">Header values</h3>
+<p>These are the positions in the tree at which header fields of an account are stored.</p>
+<pre><code class="language-python">def tree_hash(inp: bytes) -&gt; bytes32:
+    return bytes32(blake3.blake3(inp).digest())
+
+def get_tree_key(storage_type: int, tree_position: Bytes, sub_index: int):
+    return (
+        bytes([storage_type]) +
+        tree_position +
+        bytes([sub_index])
+    )
+
+def get_tree_key_for_basic_data(address: Address32):
+    return get_tree_key(HEADER_SUBTREE, hash(address), BASIC_DATA_LEAF_KEY)
+
+def get_tree_key_for_code_hash(address: Address32):
+    return get_tree_key(HEADER_SUBTREE, hash(address), CODE_HASH_LEAF_KEY)
+
+</code></pre>
+<p>An account's <code>version</code>, <code>balance</code>, <code>nonce</code>, and <code>code_size</code> fields are packed with big-endian encoding in the value found at <code>BASIC_DATA_LEAF_KEY</code>:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Offset</th>
+<th>Size</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>version</code></td>
+<td>0</td>
+<td>1</td>
+</tr>
+<tr>
+<td><code>code_size</code></td>
+<td>5</td>
+<td>3</td>
+</tr>
+<tr>
+<td><code>nonce</code></td>
+<td>8</td>
+<td>8</td>
+</tr>
+<tr>
+<td><code>balance</code></td>
+<td>16</td>
+<td>16</td>
+</tr>
+</tbody>
+</table></div>
+<p>Bytes <code>1..4</code> are reserved for future use.</p>
+<p>The current layout and encoding allow for an extension of <code>code_size</code> to 4 bytes without changing the account version. The goal of packing these fields together in a basic-data leaf is to reduce gas costs, since we only need one branch opening compared with the usual 3 or 4 if the fields aren't packed. This also simplifies witness generation.</p>
+<p>When any account header field is set, the <code>version</code> field is also set to zero. The <code>codehash</code> and <code>code_size</code> fields are set upon contract or EOA creation.</p>
+<h3 id="code">Code</h3>
+<pre><code class="language-python">def get_tree_key_for_code_chunk(address: Address32, chunk_id: int):
+    if chunk_id &lt; CODE_CHUNKS_IN_HEADER:
+        return get_tree_key(HEADER_SUBTREE, hash(address), CODE_OFFSET + chunk_id)
+    else:
+        high = (chunk_id - CODE_CHUNKS_IN_HEADER) // STEM_SUBTREE_WIDTH
+        low = (chunk_id - CODE_CHUNKS_IN_HEADER) % STEM_SUBTREE_WIDTH
+        return get_tree_key(CODE_SUBTREE, hash(address + bytes([high])), low)
+</code></pre>
+<p>Chunk <code>i</code> stores a 32 byte value, where bytes 1…31 are bytes <code>i*31...(i+1)*31 - 1</code> of the code (i.e. the i'th 31-byte slice of it), and byte 0 is the number of leading bytes that are part of PUSHDATA (e.g. if part of the code is <code>...PUSH4 99 98 | 97 96 PUSH1 128 MSTORE...</code> where <code>|</code> is the position where a new chunk begins, then the encoding of the latter chunk would begin <code>2 97 96 PUSH1 128 MSTORE</code> to reflect that the first 2 bytes are PUSHDATA).</p>
+<p>For precision, here is an implementation of code chunkification:</p>
+<pre><code class="language-python">PUSH_OFFSET = 95
+PUSH1 = PUSH_OFFSET + 1
+PUSH32 = PUSH_OFFSET + 32
+
+def chunkify_code(code: bytes) -&gt; Sequence[bytes32]:
+    # Pad to multiple of 31 bytes
+    if len(code) % 31 != 0:
+        code += b'\\x00' * (31 - (len(code) % 31))
+    # Figure out how much pushdata there is after including each byte
+    bytes_to_exec_data = [0] * (len(code) + 32)
+    pos = 0
+    while pos &lt; len(code):
+        if PUSH1 &lt;= code[pos] &lt;= PUSH32:
+            pushdata_bytes = code[pos] - PUSH_OFFSET
+        else:
+            pushdata_bytes = 0
+        pos += 1
+        for x in range(pushdata_bytes):
+            bytes_to_exec_data[pos + x] = pushdata_bytes - x
+        pos += pushdata_bytes
+    # Output chunks
+    return [
+        bytes([min(bytes_to_exec_data[pos], 31)]) + code[pos: pos+31]
+        for pos in range(0, len(code), 31)
+    ]
+
+</code></pre>
+<h3 id="storage">Storage</h3>
+<pre><code class="language-python">def get_tree_key_for_storage_slot(address: Address32, storage_key: int):
+    if storage_key &lt; STORAGE_CHUNKS_IN_HEADER:
+        return get_tree_key(HEADER_SUBTREE, hash(address), STORAGE_OFFSET + chunk_id)
+    else:
+        high = (storage_key - STORAGE_CHUNKS_IN_HEADER) // STEM_SUBTREE_WIDTH
+        low = (storage_key - STORAGE_CHUNKS_IN_HEADER) % STEM_SUBTREE_WIDTH
+        return get_tree_key(STORAGE_SUBTREE, hash(address) + hash(address + int_to_bytes(high)), low)
+</code></pre>
+<p>Note that storage slots within the same range of size <code>STEM_SUBTREE_WIDTH</code> (i.e. a range with the form <code>x*STEM_SUBTREE_WIDTH ... (x+1)*STEM_SUBTREE_WIDTH-1)</code> are all, except for the <code>HEADER_STORAGE_OFFSET</code> special case, part of a single stem.</p>
+<h3 id="fork">Fork</h3>
+<p>Described in <a href="https://eips.ethereum.org/EIPS/eip-7612">EIP-7612</a>.</p>
+<h3 id="access-events">Access events</h3>
+<p>Described in <a href="https://eips.ethereum.org/EIPS/eip-4762">EIP-4762</a>.</p>
+<h2 id="rationale">Rationale</h2>
+<p>This EIP defines a new Binary Tree that starts empty. Only new state changes are stored in the tree. The MPT continues to exist but is frozen. This sets the stage for a future hard fork that migrates the MPT data to this Binary Tree (<a href="https://eips.ethereum.org/EIPS/eip-7748">EIP-7748</a>).</p>
+<h3 id="single-tree-design">Single tree design</h3>
+<p>The proposal uses a single-layer tree structure with bytes as keys and 32 byte values for several reasons:</p>
+<ul>
+<li><strong>Simplicity</strong>: working with the abstraction of a key/value store makes it easier to write code dealing with the tree (e.g. database reading/writing, caching, syncing, proof creation, and verification) and upgrade it to other trees in the future. Additionally, witness gas rules can become simpler and clearer.</li>
+<li><strong>Extensibility</strong>: account headers and code being in the same structure as storage makes it easier to extend both features and even add new structures if desired.</li>
+</ul>
+<h3 id="storage-type-as-prefix">Storage type as prefix</h3>
+<p>This proposal has the storage type (headers, code, storage) as the prefix of the tree key, for several reasons:</p>
+<ul>
+<li><strong>Separate syncability</strong>: it's possible to sync one subtree without syncing others. This will be especially valuable in the near term for syncing VOPS</li>
+<li><strong>Extensibility</strong>: it's easier to handle different types of storage differently. For example, nodes could simply not store some types of state, or store them in some compacted way that depends on its structure, and because each type is in its own subtree, the need to maintain Merkle sister nodes to update the state would not interfere with this.</li>
+</ul>
+<h3 id="hashaddress-hashaddress-storage_key_prefix-formula"><code>hash(address) + hash(address + storage_key_prefix)</code> formula</h3>
+<p>This ensures that storage keys that get "grinded" to be close to each other cannot be reused between different contracts, mitigating a DoS vector.</p>
+<h3 id="snark-friendliness-and-post-quantum-security">SNARK friendliness and Post-Quantum security</h3>
+<p>The proposed design should consider the usual complexity, performance, and efficiency for out-of-circuit implementations (i.e. EL clients) and in-circuit ones for generating proofs in ZK circuits.</p>
+<p>The tree design structure tries to be simple, by not having complex branching rules. For example, in contrast with the MPT, we avoid extension nodes injected in the middle of branches. Also, RLP encoding was removed since it adds unnecessary complexity. Although complexity can be managed more easily in out-of-circuit implementations, it's valuable to help circuit implementations be as simple as possible to avoid proving overhead.</p>
+<p>The most important factor in the design is the cryptographic hash function used for merkleization. This hash function should have efficient implementations both out and in circuits. The hash function selection remains TBD, with several candidates under consideration:</p>
+<ol>
+<li><strong>BLAKE3</strong>:</li>
+<li>Good out-of-circuit performance (i.e., for raw EL client execution)</li>
+<li>Reasonable in-circuit performance for proving</li>
+<li>Well-established security properties</li>
+<li>
+<p>Currently used in the reference implementation to facilitate experimentation</p>
+</li>
+<li>
+<p><strong>Keccak</strong>:</p>
+</li>
+<li>Already used in Ethereum, reducing implementation complexity</li>
+<li>Well-studied security properties</li>
+<li>
+<p>Less efficient for circuit proving than alternatives</p>
+</li>
+<li>
+<p><strong>Poseidon2</strong>:</p>
+</li>
+<li>Excellent in-circuit performance for ZK proofs</li>
+<li>Potentially better proving throughput</li>
+<li>Security analysis still ongoing through EF cryptography initiative</li>
+<li>Would require additional specification for field selection and encoding</li>
+</ol>
+<p>The final hash function selection will balance these considerations, with particular attention to security, proving efficiency, and implementation complexity.</p>
+<p>Due to recent progress in the quantum computing field, expert estimations consider that they can become real in the 2030s. NIST suggests stopping the use of ECC by 2030 too. Other alternatives, such as Verkle Trees, introduce a new cryptography stack to the protocol, which relies on elliptic curves that aren't post-quantum secure. This makes the current tree proposal attractive since it only depends on hash functions, which are still safe in this new paradigm.</p>
+<p>Moreover, there has been impressive progress in proving systems, which indicates that we could be close to achieving the required performance for creating pre-state &amp; post-state proofs fast enough. This last point is crucial since the main advantage of Verkle Trees was having proofs that are small and fast to generate.</p>
+<p>Finally, the current state tree proposal will probably be the final state tree used in the protocol, compared with Verkle Trees, which would eventually need to be replaced by a post-quantum secure alternative.</p>
+<h3 id="arity-2">Arity-2</h3>
+<p>Binary tries have been chosen primarily because they reduce the witness size. In general, in an <code>N</code>-element tree with each element having <code>k</code> children, the average size of a branch is roughly <code>32 * (k-1) * log(N) / log(k)</code> plus a few percent for overhead. 32 is the length of a hash; the <code>k-1</code> refers to the fact that a Merkle proof needs to provide all <code>k-1</code> sister nodes at each level, and <code>log(N) / log(k)</code> is an approximation of the number of levels in the tree (e.g. a tree where each node has 5 children, with 625 nodes total, would have depth 4, as <code>625 = 5**4</code> and so <code>log(625) / log(5) = 4</code>).</p>
+<p>For any <code>N</code>, the expression is minimized at <code>k = 2</code>. Here's a table of branch lengths for different <code>k</code> values assuming <code>N = 2**24</code>:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th><code>k</code> (children per node)</th>
+<th>Branch length (chunks)</th>
+<th>Branch length (bytes)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2</td>
+<td>1 * 24 = 24</td>
+<td>768</td>
+</tr>
+<tr>
+<td>4</td>
+<td>3 * 12 = 36</td>
+<td>1152</td>
+</tr>
+<tr>
+<td>8</td>
+<td>7 * 8 = 56</td>
+<td>1792</td>
+</tr>
+<tr>
+<td>16</td>
+<td>15 * 6 = 90</td>
+<td>2880</td>
+</tr>
+</tbody>
+</table></div>
+<p>Actual branch lengths might be slightly larger than this due to uneven distribution, but the pattern of <code>k=2</code> remains by far the best.</p>
+<h3 id="tree-depth">Tree depth</h3>
+<p>The tree design attempts to be as simple as possible considering both out-of-circuit and circuit implementations, while satisfying our throughput constraints on proving hashes.</p>
+<p>The proposed design avoids a full 248-bit depth as it would happen in a Sparse Merkle Tree (SMT). This approach helps reduce the hashing load in proving systems, which is currently a throughput bottleneck on commodity hardware. The choice of hash function will impact this consideration - arithmetic-friendly hash functions like Poseidon2 would have different performance characteristics than cryptographic hash functions like BLAKE3 or Keccak. There are some optimization techniques that could be applied, but they add complexity to the specification.</p>
+<p>Moreover, we could push this further trying to introduce extension nodes in the middle of paths as done in a MPT, but this also adds complexity that might not be worth it considering the tree should be quite balanced.</p>
+<h3 id="state-expiry">State-expiry</h3>
+<p>State-expiry strategies such as <a href="https://eips.ethereum.org/EIPS/eip-7736">EIP-7736</a> could still be applied, requiring a change in the design. One potential solution is adding a field to the <code>StemNode</code> with <code>epoch</code> as described in the mentioned EIP. Another alternative is to use 247-bits for the stem, and have two subtrees <code>StemValuesNode</code>, which would correspond to the current 256-values, and <code>StemMetaNode</code> which is also a 256-subtree that can be used to store arbitrary stem metadata.</p>
+<h2 id="backwards-compatibility">Backwards Compatibility</h2>
+<p>The main breaking changes are:</p>
+<ul>
+<li>(1) Gas costs for code chunk access can have an impact on applications' economic viability</li>
+<li>(2) Tree structure change makes in-EVM proofs of historical state no longer work</li>
+</ul>
+<p>(1) can be mitigated by increasing the gas limit while implementing this EIP, allowing the same economic viability for applications.</p>
+<!-- TODO:
+
+## Test Cases
+
+- Add comprehensive test vectors for tree operations
+- Finalize hash function selection and provide test vectors for the selected function
+- Add test cases for edge cases in tree operations
+
+-->
+
+<!-- TODO: Remove external link
+
+## Reference Implementation
+
+Python reference implementation (`github.com/jsign/binary-tree-spec`).
+
+-->
+
+<h2 id="security-considerations">Security Considerations</h2>
+<p>Needs discussion. <!-- TODO --></p>
+<h2 id="copyright">Copyright</h2>
+<p>Copyright and related rights waived via <a href="../LICENSE.md">CC0</a>.</p>
+</main>
+</body>
+</html>
