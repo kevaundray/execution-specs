@@ -333,13 +333,10 @@ def binarize(entries: Mapping[Key, Bytes32], depth: Uint) -> BinaryNode:
     [`BranchNode`]: ref:ethereum.binary_trie.trie.BranchNode
     """
     assert len(entries) > 0
-    # If there is only one key, value in the trie
-    # then we return it as a leaf node
     if len(entries) == 1:
         ((key, value),) = entries.items()
         return LeafNode(key, value)
 
-    # Maps keys to their bitlist
     bit_lists = {key: bytes_to_bit_list(key) for key in entries}
 
     prefix_length = Uint(0)
@@ -349,12 +346,10 @@ def binarize(entries: Mapping[Key, Bytes32], depth: Uint) -> BinaryNode:
         # would be a prefix of theirs; see `Key`.
         for bit_list in bit_lists.values():
             assert position < Uint(len(bit_list))
-        bits_at_position = {
+        distinct_bits_at_position = {
             bit_list[position] for bit_list in bit_lists.values()
         }
-        # check if more than one of the keys have the same bit at position
-        # If two or more keys share the same bit, then we stop the loop
-        if len(bits_at_position) > 1:
+        if len(distinct_bits_at_position) > 1:
             break
         prefix_length += Uint(1)
 

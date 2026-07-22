@@ -15,12 +15,12 @@ byte — so digests are used untruncated, and every key of a zone has
 the same length, keeping keys prefix-free as the tree requires.
 
 A key's **stem** is every byte except its final sub-index byte. Keys
-sharing a stem form one group of up to 256 co-located values that
-open together in one branch — this is how data accessed together is
-kept cheap to prove: the account header stem holds an account's
-basic data, code hash, first storage slots, and first code chunks.
-The tree has no stem node type; a stem survives only as a shared bit
-prefix carried by the branch below it.
+sharing a stem form one group of co-located values (see
+[`STEM_SUBTREE_WIDTH`]) that open together in one branch — this is
+how data accessed together is kept cheap to prove: the account
+header stem holds an account's basic data, code hash, first storage
+slots, and first code chunks. The tree has no stem node type; a stem
+survives only as a shared bit prefix carried by the branch below it.
 
 State is embedded into the key space through the derivation functions
 [`get_tree_key_for_basic_data`], [`get_tree_key_for_code_hash`],
@@ -33,6 +33,7 @@ account's scalar fields packed into one leaf by [`encode_basic_data`].
 [`ACCOUNT_ZONE`]: ref:ethereum.binary_trie.embedding.ACCOUNT_ZONE
 [`CODE_ZONE`]: ref:ethereum.binary_trie.embedding.CODE_ZONE
 [`STORAGE_ZONE`]: ref:ethereum.binary_trie.embedding.STORAGE_ZONE
+[`STEM_SUBTREE_WIDTH`]: ref:ethereum.binary_trie.embedding.STEM_SUBTREE_WIDTH
 [`chunkify_code`]: ref:ethereum.binary_trie.embedding.chunkify_code
 [`encode_basic_data`]: ref:ethereum.binary_trie.embedding.encode_basic_data
 [`get_tree_key_for_basic_data`]: ref:ethereum.binary_trie.embedding.get_tree_key_for_basic_data
@@ -47,7 +48,7 @@ from ethereum_types.bytes import Bytes, Bytes20, Bytes32
 from ethereum_types.numeric import U8, U32, U64, U256, Uint
 
 from ethereum.crypto.hash import Hash32, keccak256
-from ethereum.utils.byte import left_pad_zero_bytes
+from ethereum.utils.byte import left_pad_zero_bytes, right_pad_zero_bytes
 
 from .trie import Key, blake3_hash
 
@@ -230,7 +231,10 @@ def get_tree_key(zone: Zone, tree_position: Bytes, sub_index: U8) -> Key:
 
     Nothing is truncated: because the zone is a full byte prepended
     to the key rather than bits carved out of a fixed-size stem, the
-    digests in `tree_position` keep their entire width.
+    digests in `tree_position` keep their entire width. `zone` is not
+    restricted to the currently defined zones, so this function
+    cannot assert a fixed key length itself; each derivation function
+    knows its own zone's length and asserts it.
     """
     return Key(bytes([int(zone)]) + tree_position + bytes([int(sub_index)]))
 
@@ -241,12 +245,13 @@ def get_tree_key_for_header(address: Address32, sub_index: Uint) -> Key:
 
     The header stem is in [`ACCOUNT_ZONE`] and is keyed by the address
     alone, so each account has exactly one header stem. The header is
-    not one key: it is up to 256 separate leaves sharing that stem,
-    and `sub_index` selects which one — basic data, code hash, an
-    early storage slot, or an early code chunk.
+    not one key: it is up to [`STEM_SUBTREE_WIDTH`] separate leaves
+    sharing that stem, and `sub_index` selects which one — basic
+    data, code hash, an early storage slot, or an early code chunk.
 
     [`ACCOUNT_ZONE`]: ref:ethereum.binary_trie.embedding.ACCOUNT_ZONE
-    """
+    [`STEM_SUBTREE_WIDTH`]: ref:ethereum.binary_trie.embedding.STEM_SUBTREE_WIDTH
+    """  # noqa: E501
     key = get_tree_key(ACCOUNT_ZONE, key_hash(address), U8(sub_index))
     assert len(key) == int(ACCOUNT_KEY_LENGTH)
     return key
@@ -285,8 +290,6 @@ def storage_tree_position(address: Address32, tree_index: U256) -> Bytes:
 
     [`get_tree_key_for_header`]: ref:ethereum.binary_trie.embedding.get_tree_key_for_header
     """  # noqa: E501
-    # The first hash creates the per-account bucket; the second is
-    # salted with the address so ground clusters do not transfer.
     prefix = key_hash(address)
     suffix = key_hash(address + tree_index.to_be_bytes32())
     return Bytes(prefix + suffix)
@@ -376,16 +379,6 @@ def get_tree_key_for_code_chunk(
     return key
 
 
-# What is the process for proving that a chunk for a piece of code
-# belongs to an account and it is correctly being accessed?
-
-# Noting: code is deduplicated but not the first 4KB
-
-
-# Open decision about where metadata will be stored, like cold/hot
-# and even key expiry. Should these items be stored via a sub-index,
-# or should the tree know about this: ie we may have branch nodes
-# holding "value" (metadata).
 def chunkify_code(code: Bytes) -> List[Bytes32]:
     """
     Split `code` into the 32-byte chunks stored in the tree.
@@ -398,7 +391,7 @@ def chunkify_code(code: Bytes) -> List[Bytes32]:
     """
     if len(code) % 31 != 0:
         pad_amount = 31 - (len(code) % 31)
-        code = Bytes(code + b"\x00" * pad_amount)
+        code = Bytes(right_pad_zero_bytes(code, len(code) + pad_amount))
 
     # Number of push-data bytes remaining at each position, counting
     # the position itself; `0` marks executable bytes. The extra 32
@@ -453,7 +446,6 @@ def encode_basic_data(code_size: U32, nonce: U64, balance: U256) -> Bytes32:
         bytes([int(BASIC_DATA_VERSION)])
         # Reserved bytes: headroom for future header fields, or for
         # widening a neighbouring field, without a version bump.
-        # TODO: check if this rationale is correct for reserved bytes
         + b"\x00" * 3
         + code_size.to_be_bytes4()
         + nonce.to_be_bytes8()
