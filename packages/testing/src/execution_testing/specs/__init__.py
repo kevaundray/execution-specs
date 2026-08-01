@@ -1,6 +1,9 @@
 """Test spec definitions and utilities."""
 
+from typing import Tuple, Type, TypeAlias
+
 from .base import BaseTest, TestSpec
+from .base_direct import BaseDirectTest
 from .base_static import BaseStaticTest
 from .benchmark import (
     BenchmarkTest,
@@ -16,6 +19,7 @@ from .blockchain import (
     BlockchainTestSpec,
     Header,
 )
+from .pbt import PBTTest, PBTTestFiller
 from .state import StateTest, StateTestFiller, StateTestSpec
 from .static_state.state_static import StateStaticTest
 from .transaction import (
@@ -24,9 +28,22 @@ from .transaction import (
     TransactionTestSpec,
 )
 
+FillTestType: TypeAlias = Type[BaseTest] | Type[BaseDirectTest]
+
+
+def get_fill_test_types() -> Tuple[FillTestType, ...]:
+    """Return all test types supported by the fixture filler."""
+    return (
+        *BaseTest.spec_types.values(),
+        *BaseDirectTest.spec_types.values(),
+    )
+
+
 __all__ = (
     "BaseStaticTest",
+    "BaseDirectTest",
     "BaseTest",
+    "FillTestType",
     "BenchmarkTest",
     "BenchmarkTestFiller",
     "BenchmarkTestSpec",
@@ -41,6 +58,8 @@ __all__ = (
     "Block",
     "Header",
     "OpcodeTarget",
+    "PBTTest",
+    "PBTTestFiller",
     "StateStaticTest",
     "StateTest",
     "StateTestFiller",
@@ -49,4 +68,5 @@ __all__ = (
     "TransactionTest",
     "TransactionTestFiller",
     "TransactionTestSpec",
+    "get_fill_test_types",
 )

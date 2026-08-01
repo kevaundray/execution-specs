@@ -31,7 +31,7 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import ReadTimeout
 from requests_unixsocket import Session
 
-from execution_testing.base_types import BlobSchedule
+from execution_testing.base_types import BlobSchedule, Hash
 from execution_testing.base_types.composite_types import (
     ForkBlobSchedule,
 )
@@ -169,7 +169,7 @@ class OutputCache:
             # Without this, every cached subcall would retain its own
             # `output/alloc.json` on disk for the test's lifetime - O(N) for
             # an N-block chained test.
-            alloc.get()
+            alloc.materialize()
             alloc._keepalive = None
         self._cache[subkey] = value
 
@@ -177,6 +177,35 @@ class OutputCache:
         """Clear the cache and reset the key."""
         self._cache.clear()
         self.key = None
+
+
+def spec_calc_state_root(*, alloc: Alloc, fork: Fork) -> Hash:
+    """
+    Compute the state root of `alloc` through the spec state provider
+    of `fork` (e.g. the EIP-8297 binary tree), falling back to the
+    framework's local Merkle Patricia Trie computation for forks the
+    spec does not implement.
+
+    Side effect: installs `fork`'s provider on `alloc`, so any later
+    root computed from this allocation uses the same commitment
+    scheme. This matches what the transition tool installs when the
+    allocation is executed, and an allocation only ever serves one
+    fork.
+    """
+    # Deferred imports: `ethereum` must not load before pytest-cov
+    # starts.
+    from ethereum_spec_tools.evm_tools.loaders.fork_loader import ForkLoad
+    from ethereum_spec_tools.evm_tools.utils import (
+        get_supported_forks,
+        resolve_fork,
+    )
+
+    name = fork.transition_tool_name()
+    if name not in get_supported_forks():
+        return alloc.state_root()
+    fork_load = ForkLoad(resolve_fork(name))
+    alloc.set_state_provider(fork_load.state_provider.__name__)
+    return alloc.state_root()
 
 
 class TransitionTool(EthereumCLI):
@@ -202,6 +231,7 @@ class TransitionTool(EthereumCLI):
     debug_dump_dir: Path | None = None
     call_counter: int = 0
     opcode_count: OpcodeCount | None = None
+    opcode_count_per_block: List[OpcodeCount] | None = None
 
     supports_opcode_count: ClassVar[bool] = False
     supports_xdist: ClassVar[bool] = True
@@ -314,6 +344,7 @@ class TransitionTool(EthereumCLI):
         Reset the opcode count to zero.
         """
         self.opcode_count = OpcodeCount({})
+        self.opcode_count_per_block = []
 
     @dataclass
     class TransitionToolData:
@@ -669,7 +700,7 @@ class TransitionTool(EthereumCLI):
                 dump_files_to_directory(
                     debug_output_path,
                     {
-                        "output/alloc.json": output.alloc.raw,
+                        "output/alloc.json": output.alloc,
                         "output/result.json": output.result,
                         "output/txs.rlp": str(output.body),
                         "response_info.txt": response_info,
@@ -987,6 +1018,8 @@ class TransitionTool(EthereumCLI):
             and self.opcode_count is not None
         ):
             self.opcode_count += result.result.opcode_count
+            if self.opcode_count_per_block is not None:
+                self.opcode_count_per_block.append(result.result.opcode_count)
         return result
 
     def evaluate(

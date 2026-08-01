@@ -144,6 +144,33 @@ fill-release *args:
         --log-level=DEBUG \
         "$@"
 
+# Fill the consensus tests for the experimental EIP-8297 binary tree
+# fork; only reachable via --fork BinaryTree (deployed=False), which
+# the framework rejects if combined with --until, so this recipe omits
+# --until instead of mirroring `fill`'s --until "{{ latest_fork }}".
+[group('consensus tests')]
+binary-trie-fork *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "{{ output_dir }}/binary-trie-fork/tmp" \
+        "{{ output_dir }}/binary-trie-fork/logs"
+    # A caller-supplied path replaces the default instead of extending
+    # it: appending "$@" ahead of a hardcoded "tests/binary_tree" (the
+    # `fill` shape) would still collect the whole tree, since any
+    # narrower path a caller passes is already inside it.
+    paths="${@:-tests/binary_tree}"
+    uv run fill \
+        -m "not slow" \
+        -n {{ xdist_workers }} --dist=loadgroup \
+        --skip-index \
+        --output="{{ output_dir }}/binary-trie-fork/fixtures" \
+        --basetemp="{{ output_dir }}/binary-trie-fork/tmp" \
+        --log-to "{{ output_dir }}/binary-trie-fork/logs" \
+        --clean \
+        --fork BinaryTree \
+        --durations=50 \
+        $paths
+
 # --- Integration Tests ---
 
 # Fill the base coverage consensus tests using EELS with PyPy
@@ -250,6 +277,16 @@ test-tests-bench *args:
 test-ci-scripts *args:
     uv run pytest "$@" .github/scripts/tests/
 
+# Run the binary trie unit tests
+[group('unit tests')]
+binary-trie-unit-test *args:
+    @mkdir -p "{{ output_dir }}/binary-trie-unit-test/tmp"
+    uv run pytest \
+        -n {{ xdist_workers }} \
+        --basetemp="{{ output_dir }}/binary-trie-unit-test/tmp" \
+        "$@" \
+        tests/binary_trie
+
 # --- Benchmarks ---
 
 # Smoke-test benchmark tests: fill blockchain_test fixtures, then verify against EELS.
@@ -261,7 +298,7 @@ bench-gas *args:
         --generate-pre-alloc-groups \
         --evm-bin="{{ evm_bin }}" \
         --gas-benchmark-values 1 \
-        --fork Osaka \
+        --fork Amsterdam \
         -m "not slow" \
         -n auto --maxprocesses 10 --dist=loadgroup \
         --output="{{ output_dir }}/bench-gas/pre-alloc" \
@@ -274,7 +311,7 @@ bench-gas *args:
     uv run fill \
         --evm-bin="{{ evm_bin }}" \
         --gas-benchmark-values 1 \
-        --fork Osaka \
+        --fork Amsterdam \
         -m "blockchain_test and (not derived_test) and (not slow)" \
         -n auto --maxprocesses 10 --dist=loadgroup \
         --durations=20 \
@@ -288,7 +325,7 @@ bench-gas *args:
     @rm -rf tests/json_loader/bench_gas_fixtures
     ln -sfn "{{ output_dir }}/bench-gas/fixtures" tests/json_loader/bench_gas_fixtures
     cd tests/json_loader && uv run --python pypy3.11 --no-dev --group test pytest \
-        --fork Osaka \
+        --fork Amsterdam \
         --allow-post-state-hash \
         -n auto --maxprocesses 10 --dist=loadfile \
         --durations=20 \
@@ -302,8 +339,8 @@ bench-opcode *args:
     uv run fill \
         --evm-bin="{{ evm_bin }}" \
         --fixed-opcode-count 1 \
-        --fork Osaka \
-        -m repricing \
+        --fork Amsterdam \
+        -m "repricing and not slow" \
         -n auto --maxprocesses 10 --dist=loadgroup \
         -k "not test_alt_bn128 and not test_bls12_381 and not test_modexp and not uncachable" \
         --output="{{ output_dir }}/bench-opcode/fixtures" \
@@ -321,10 +358,10 @@ bench-opcode-config *args:
     uv run fill \
         --evm-bin="{{ evm_bin }}" \
         --fixed-opcode-count \
-        --fork Osaka \
-        -m repricing \
+        --fork Amsterdam \
+        -m "repricing and not slow" \
         -n auto --maxprocesses 10 --dist=loadgroup \
-        -k "not test_alt_bn128 and not test_bls12_381 and not test_modexp and not test_point_evaluation_uncachable" \
+        -k "not test_alt_bn128 and not test_bls12_381 and not test_modexp and not uncachable" \
         --output="{{ output_dir }}/bench-opcode-config/fixtures" \
         --basetemp="{{ output_dir }}/bench-opcode-config/tmp" \
         --log-to "{{ output_dir }}/bench-opcode-config/logs" \

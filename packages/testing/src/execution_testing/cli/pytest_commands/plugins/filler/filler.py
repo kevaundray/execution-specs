@@ -77,7 +77,11 @@ from execution_testing.forks import (
     TransitionFork,
     get_transition_forks,
 )
-from execution_testing.specs import BaseTest
+from execution_testing.specs import (
+    BaseDirectTest,
+    BaseTest,
+    get_fill_test_types,
+)
 from execution_testing.specs.base import FillResult, OpMode
 from execution_testing.test_types import EnvironmentDefaults
 from execution_testing.test_types.chain_config_types import (
@@ -1567,6 +1571,62 @@ def fixture_source_url(
     return github_url
 
 
+def direct_test_parametrizer(cls: Type[BaseDirectTest]) -> Any:
+    """Generate a pytest fixture for a fork-aware, non-``t8n`` test."""
+
+    @pytest.fixture(scope="function", name=cls.pytest_parameter_name())
+    def direct_test_parametrizer_func(
+        request: pytest.FixtureRequest,
+        fork: Fork | TransitionFork,
+        reference_spec: ReferenceSpec | None,
+        output_dir: Path,
+        fixture_collector: FixtureCollector,
+        test_case_description: str,
+        fixture_source_url: str,
+    ) -> Any:
+        """Instantiate, generate, annotate, and collect a direct fixture."""
+        fixture_format = request.param
+        assert issubclass(fixture_format, BaseFixture)
+
+        class DirectTestWrapper(cls):  # type: ignore
+            """Generate and collect a direct fixture when instantiated."""
+
+            __is_base_test_wrapper__ = True
+
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                kwargs["fork"] = fork
+                super().__init__(*args, **kwargs)
+                fixture = self.generate(fixture_format=fixture_format)
+                assert isinstance(fixture, fixture_format)
+                fixture.fill_info(
+                    None,
+                    test_case_description,
+                    fixture_source_url=fixture_source_url,
+                    ref_spec=reference_spec,
+                    _info_metadata=None,
+                )
+
+                output_subdir = resolve_fixture_subfolder(
+                    list(request.node.iter_markers("fixture_subfolder"))
+                )
+                fixture_path = fixture_collector.add_fixture(
+                    node_to_test_info(request.node),
+                    fixture,
+                    output_subdir=output_subdir,
+                )
+                request.node.config.fixture_path_absolute = str(
+                    fixture_path.absolute()
+                )
+                request.node.config.fixture_path_relative = str(
+                    fixture_path.relative_to(output_dir)
+                )
+                request.node.config.fixture_format = fixture.format_name
+
+        return DirectTestWrapper
+
+    return direct_test_parametrizer_func
+
+
 def base_test_parametrizer(cls: Type[BaseTest]) -> Any:
     """
     Generate pytest.fixture for a given BaseTest subclass.
@@ -1754,6 +1814,9 @@ def base_test_parametrizer(cls: Type[BaseTest]) -> Any:
                 # If operation mode is benchmarking, check the gas used.
                 self.validate_benchmark_gas(
                     benchmark_gas_used=fill_result.benchmark_gas_used,
+                    benchmark_block_gas_used=(
+                        fill_result.benchmark_block_gas_used
+                    ),
                     gas_benchmark_value=gas_benchmark_value,
                 )
 
@@ -1784,6 +1847,11 @@ def base_test_parametrizer(cls: Type[BaseTest]) -> Any:
                     fill_metadata["opcode_count"] = (
                         t8n.opcode_count.model_dump()
                     )
+                if t8n.opcode_count_per_block:
+                    fill_metadata["opcode_count_per_block"] = [
+                        block_opcode_count.model_dump()
+                        for block_opcode_count in t8n.opcode_count_per_block
+                    ]
                 if fill_result.metadata:
                     fill_metadata.update(fill_result.metadata)
 
@@ -1830,6 +1898,16 @@ for name, cls in BaseTest.spec_types.items():
     # Fixture needs to be defined in the global scope so pytest can detect it.
     globals()[cls.pytest_parameter_name()] = base_test_parametrizer(cls)
 
+for direct_name, direct_cls in BaseDirectTest.spec_types.items():
+    if getattr(direct_cls, "__is_base_test_wrapper__", False):
+        raise RuntimeError(
+            f"Direct test spec type {direct_name}: {direct_cls.__name__} "
+            "is already wrapped."
+        )
+    globals()[direct_cls.pytest_parameter_name()] = direct_test_parametrizer(
+        direct_cls
+    )
+
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     """
@@ -1841,7 +1919,7 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     """
     session: FillingSession = metafunc.config.filling_session  # type: ignore[attr-defined]
     markers = list(metafunc.definition.iter_markers())
-    for test_type in BaseTest.spec_types.values():
+    for test_type in get_fill_test_types():
         if test_type.pytest_parameter_name() in metafunc.fixturenames:
             parameters: List[ParameterSet] = []
             for (
