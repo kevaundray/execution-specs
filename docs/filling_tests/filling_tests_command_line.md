@@ -74,6 +74,21 @@ or, for a test function and specific parameter combination:
 uv run fill tests/shanghai/eip3651_warm_coinbase/test_warm_coinbase.py::test_warm_coinbase_gas_usage[fork_Paris-DELEGATECALL]
 ```
 
+## Filling PBT Conformance Tests
+
+Partitioned Binary Tree conformance tests exercise raw tree primitives rather
+than EVM execution or block processing. They therefore use the `pbt_test`
+fixture format and require a fork, but do not invoke a transition tool:
+
+```console
+uv run fill --fork=BinaryTree --output=fixtures/pbt tests/pbt
+```
+
+The generated JSON is written beneath `pbt_tests/`. These vectors contain PBT
+inputs and reference outputs; they are not state, blockchain, or Engine test
+fixtures. The selected fork is encoded in each fixture because it defines the
+PBT rules under test.
+
 ## Execution for Development Forks
 
 !!! note ""

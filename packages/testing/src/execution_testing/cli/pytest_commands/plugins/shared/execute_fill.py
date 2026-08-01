@@ -13,7 +13,11 @@ from execution_testing.execution import BaseExecute, LabeledExecuteFormat
 from execution_testing.fixtures import BaseFixture, LabeledFixtureFormat
 from execution_testing.logging import get_logger
 from execution_testing.rpc import EthRPC
-from execution_testing.specs import BaseTest
+from execution_testing.specs import (
+    BaseDirectTest,
+    BaseTest,
+    get_fill_test_types,
+)
 from execution_testing.specs.base import OpMode
 from execution_testing.test_types import EOA, Alloc, ChainConfig
 
@@ -157,7 +161,7 @@ def pytest_configure(config: pytest.Config) -> None:
     else:
         raise Exception("Neither the filler nor the execute plugin is loaded.")
 
-    for spec_type in BaseTest.spec_types.values():
+    for spec_type in get_fill_test_types():
         for marker, description in spec_type.supported_markers.items():
             config.addinivalue_line(
                 "markers",
@@ -309,7 +313,10 @@ def pytest_make_parametrize_id(
     return f"{argname}_{val}"
 
 
-SPEC_TYPES_PARAMETERS: List[str] = list(BaseTest.spec_types.keys())
+SPEC_TYPES_PARAMETERS: List[str] = [
+    *BaseTest.spec_types.keys(),
+    *BaseDirectTest.spec_types.keys(),
+]
 
 
 def pytest_runtest_call(item: pytest.Item) -> None:

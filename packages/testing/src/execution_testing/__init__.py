@@ -29,10 +29,11 @@ from .exceptions import (
     EngineAPIError,
     TransactionException,
 )
-from .fixtures import BaseFixture, FixtureCollector
+from .fixtures import BaseFixture, FixtureCollector, PBTEntry, PBTFixture
 from .forks import Fork, GasCosts, RefundTypes, TransitionFork
 from .recipient_type import RecipientType
 from .specs import (
+    BaseDirectTest,
     BaseTest,
     BenchmarkTest,
     BenchmarkTestFiller,
@@ -43,6 +44,8 @@ from .specs import (
     BlockchainTestFiller,
     Header,
     OpcodeTarget,
+    PBTTest,
+    PBTTestFiller,
     StateTest,
     StateTestFiller,
     TransactionTest,
@@ -146,6 +149,7 @@ __all__ = (
     "BalStorageChange",
     "BalStorageSlot",
     "BaseFixture",
+    "BaseDirectTest",
     "BaseTest",
     "BenchmarkCodeGenerator",
     "BenchmarkTest",
@@ -192,6 +196,10 @@ __all__ = (
     "MemoryVariable",
     "NetworkWrappedTransaction",
     "OpcodeTarget",
+    "PBTEntry",
+    "PBTFixture",
+    "PBTTest",
+    "PBTTestFiller",
     "Op",
     "Opcode",
     "OpcodeCallArg",

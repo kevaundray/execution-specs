@@ -14,7 +14,11 @@ from execution_testing.fixtures import (
     FixtureFormat,
     LabeledFixtureFormat,
 )
-from execution_testing.specs import BaseTest
+from execution_testing.specs import (
+    BaseDirectTest,
+    BaseTest,
+    get_fill_test_types,
+)
 
 
 def option_was_explicitly_set(config: pytest.Config, option_name: str) -> bool:
@@ -130,9 +134,9 @@ def labeled_format_parameter_set(
 
 def get_spec_format_for_item(
     params: Dict[str, Any],
-) -> Tuple[Type[BaseTest], Any]:
+) -> Tuple[Type[BaseTest] | Type[BaseDirectTest], Any]:
     """Return the spec type and execute format for the given test item."""
-    for spec_type in BaseTest.spec_types.values():
+    for spec_type in get_fill_test_types():
         if spec_type.pytest_parameter_name() in params:
             return spec_type, params[spec_type.pytest_parameter_name()]
     raise ValueError("No spec type format found in the test item.")

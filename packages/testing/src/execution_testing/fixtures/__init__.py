@@ -22,6 +22,12 @@ from .collector import (
     merge_partial_fixture_files,
 )
 from .consume import FixtureConsumer
+from .pbt import (
+    PBTEntry,
+    PBTFixture,
+    PBTTreeRootExpected,
+    PBTTreeRootInput,
+)
 from .post_verifications import AccountCheck, PostVerifications
 from .pre_alloc_groups import (
     PreAllocGroup,
@@ -48,6 +54,10 @@ __all__ = [
     "AccountCheck",
     "FixtureFormat",
     "LabeledFixtureFormat",
+    "PBTEntry",
+    "PBTFixture",
+    "PBTTreeRootExpected",
+    "PBTTreeRootInput",
     "PreAllocGroup",
     "PreAllocGroupBuilder",
     "PreAllocGroupBuilders",
