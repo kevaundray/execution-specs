@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EIP-8297 Binary Trie — Implementation Notes</title>
+<style>
+  :root {
+    --bg: #F7F8FA;
+    --surface: #FFFFFF;
+    --ink: #1C2330;
+    --ink-soft: #4A5568;
+    --ink-faint: #8A94A6;
+    --rule: #DCE1E8;
+    --accent: #0E7A6E;
+    --accent-soft: #E3F0EE;
+    --code-bg: #EEF1F5;
+    --zone-account: #0E7A6E;
+    --zone-account-bg: #E3F0EE;
+    --zone-code: #A8701D;
+    --zone-code-bg: #F6EDDC;
+    --zone-storage: #6B5CA5;
+    --zone-storage-bg: #ECE8F5;
+    --zone-free: #8A94A6;
+    --zone-free-bg: #EDF0F4;
+    --warn-bg: #FBF3E4;
+    --warn-edge: #A8701D;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171C;
+      --surface: #1B1F26;
+      --ink: #E2E7EE;
+      --ink-soft: #A8B2C1;
+      --ink-faint: #6C7686;
+      --rule: #2C323C;
+      --accent: #52C2B2;
+      --accent-soft: #1D2E2B;
+      --code-bg: #21262F;
+      --zone-account: #52C2B2;
+      --zone-account-bg: #1D2E2B;
+      --zone-code: #DCA455;
+      --zone-code-bg: #2E2718;
+      --zone-storage: #A390DC;
+      --zone-storage-bg: #262035;
+      --zone-free: #6C7686;
+      --zone-free-bg: #21262F;
+      --warn-bg: #2A2416;
+      --warn-edge: #DCA455;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171C; --surface: #1B1F26; --ink: #E2E7EE; --ink-soft: #A8B2C1;
+    --ink-faint: #6C7686; --rule: #2C323C; --accent: #52C2B2; --accent-soft: #1D2E2B;
+    --code-bg: #21262F;
+    --zone-account: #52C2B2; --zone-account-bg: #1D2E2B;
+    --zone-code: #DCA455; --zone-code-bg: #2E2718;
+    --zone-storage: #A390DC; --zone-storage-bg: #262035;
+    --zone-free: #6C7686; --zone-free-bg: #21262F;
+    --warn-bg: #2A2416; --warn-edge: #DCA455;
+  }
+  :root[data-theme="light"] {
+    --bg: #F7F8FA; --surface: #FFFFFF; --ink: #1C2330; --ink-soft: #4A5568;
+    --ink-faint: #8A94A6; --rule: #DCE1E8; --accent: #0E7A6E; --accent-soft: #E3F0EE;
+    --code-bg: #EEF1F5;
+    --zone-account: #0E7A6E; --zone-account-bg: #E3F0EE;
+    --zone-code: #A8701D; --zone-code-bg: #F6EDDC;
+    --zone-storage: #6B5CA5; --zone-storage-bg: #ECE8F5;
+    --zone-free: #8A94A6; --zone-free-bg: #EDF0F4;
+    --warn-bg: #FBF3E4; --warn-edge: #A8701D;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Charter, "Bitstream Charter", "Iowan Old Style", Georgia, serif;
+    font-size: 1.0625rem;
+    line-height: 1.65;
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 3rem;
+    max-width: 76rem;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+  }
+  @media (max-width: 60rem) {
+    .shell { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    nav.toc { display: none; }
+  }
+
+  nav.toc {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    max-height: 100vh;
+    overflow-y: auto;
+    padding: 2.5rem 0 2rem;
+    font-family: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+  nav.toc .toc-title {
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    font-weight: 600;
+    color: var(--ink-faint);
+    margin-bottom: 0.75rem;
+  }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+  nav.toc a { color: var(--ink-soft); text-decoration: none; border-left: 2px solid transparent; padding-left: 0.6rem; display: block; }
+  nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); border-left-color: var(--accent); }
+
+  main { padding: 2.5rem 0 5rem; min-width: 0; }
+  article { max-width: 68ch; }
+
+  .eyebrow {
+    font-family: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.11em;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--accent);
+    margin: 0 0 0.5rem;
+  }
+  h1, h2, h3 {
+    font-family: -apple-system, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+    text-wrap: balance;
+    line-height: 1.2;
+    letter-spacing: -0.015em;
+  }
+  h1 { font-size: 2.1rem; font-weight: 700; margin: 0 0 0.75rem; }
+  h2 { font-size: 1.45rem; font-weight: 650; margin: 3.25rem 0 0.9rem; padding-top: 1.5rem; border-top: 1px solid var(--rule); }
+  h3 { font-size: 1.08rem; font-weight: 650; margin: 2rem 0 0.6rem; }
+  p { margin: 0 0 1.05rem; }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  strong { font-weight: 650; }
+
+  .lede { font-size: 1.16rem; color: var(--ink-soft); }
+  .meta {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.78rem;
+    color: var(--ink-faint);
+    display: flex; flex-wrap: wrap; gap: 0.4rem 1.4rem;
+    margin: 1.1rem 0 0;
+    padding: 0.8rem 0;
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+  }
+
+  code, pre {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.86em;
+  }
+  code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+    overflow-x: auto;
+    line-height: 1.55;
+    margin: 0 0 1.05rem;
+  }
+  pre code { background: none; padding: 0; }
+
+  figure { margin: 1.4rem 0 1.6rem; }
+  figcaption {
+    font-family: -apple-system, "SF Pro Text", system-ui, sans-serif;
+    font-size: 0.8rem;
+    color: var(--ink-faint);
+    margin-top: 0.55rem;
+    line-height: 1.5;
+  }
+  .scroller { overflow-x: auto; }
+
+  /* key layout diagram */
+  .keybar { display: flex; min-width: 34rem; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.75rem; text-align: center; }
+  .keybar .seg {
+    padding: 0.55rem 0.5rem 0.45rem;
+    border: 1px solid var(--rule);
+    border-right-width: 0;
+  }
+  .keybar .seg:last-child { border-right-width: 1px; border-radius: 0 6px 6px 0; }
+  .keybar .seg:first-child { border-radius: 6px 0 0 6px; }
+  .keybar .seg .lab { display: block; font-weight: 700; }
+  .keybar .seg .sub { display: block; color: var(--ink-soft); margin-top: 0.15rem; }
+  .seg.z-account { background: var(--zone-account-bg); color: var(--zone-account); }
+  .seg.z-hash { background: var(--surface); color: var(--ink); }
+  .seg.z-sub { background: var(--zone-free-bg); color: var(--ink-soft); }
+  .brace { display: flex; min-width: 34rem; font-family: -apple-system, system-ui, sans-serif; font-size: 0.72rem; color: var(--ink-faint); margin-top: 0.3rem; }
+
+  /* zone chips */
+  .zone-chip {
+    display: inline-block;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 0.08rem 0.5rem;
+    border-radius: 999px;
+  }
+  .zc-account { background: var(--zone-account-bg); color: var(--zone-account); }
+  .zc-code { background: var(--zone-code-bg); color: var(--zone-code); }
+  .zc-storage { background: var(--zone-storage-bg); color: var(--zone-storage); }
+  .zc-free { background: var(--zone-free-bg); color: var(--zone-free); }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-family: -apple-system, "SF Pro Text", system-ui, sans-serif;
+    font-size: 0.875rem;
+    margin: 0 0 1.05rem;
+  }
+  th, td { text-align: left; padding: 0.5rem 0.9rem 0.5rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th {
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--ink-faint); font-weight: 600;
+  }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td code { font-size: 0.8rem; }
+
+  .decision {
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 0 8px 8px 0;
+    padding: 0.9rem 1.2rem;
+    margin: 0 0 1.3rem;
+  }
+  .decision .d-title {
+    font-family: -apple-system, system-ui, sans-serif;
+    font-weight: 650; font-size: 0.95rem; margin: 0 0 0.35rem;
+  }
+  .decision p { margin: 0 0 0.5rem; font-size: 0.97rem; }
+  .decision p:last-child { margin-bottom: 0; }
+
+  .note {
+    border-left: 3px solid var(--warn-edge);
+    background: var(--warn-bg);
+    border-radius: 0 8px 8px 0;
+    padding: 0.8rem 1.2rem;
+    margin: 0 0 1.3rem;
+    font-size: 0.97rem;
+  }
+  .note p { margin: 0; }
+
+  svg text { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  ul, ol { margin: 0 0 1.05rem; padding-left: 1.4rem; }
+  li { margin-bottom: 0.35rem; }
+  li::marker { color: var(--ink-faint); }
+</style>
+</head>
+<body>
+<div class="shell">
+
+<nav class="toc" aria-label="Contents">
+  <div class="toc-title">Contents</div>
+  <ol>
+    <li><a href="#status">What this is</a></li>
+    <li><a href="#running">Running the code</a></li>
+    <li><a href="#tree">The tree</a></li>
+    <li><a href="#zones">Zones</a></li>
+    <li><a href="#embedding">The embedding</a></li>
+    <li><a href="#code">Where code lives</a></li>
+    <li><a href="#proving">Proving code chunks</a></li>
+    <li><a href="#decisions">Design decisions</a></li>
+    <li><a href="#eels">Decisions in this port</a></li>
+    <li><a href="#7864">Between the two EIPs</a></li>
+  </ol>
+</nav>
+
+<main>
+<article>
+
+<p class="eyebrow">execution-specs · projects/binary-trie</p>
+<h1>The Partitioned Binary Tree — variable-key variant</h1>
+<p class="lede">What is being built on this branch, how the tree and its state embedding work, and why the design looks the way it does. The implementation is a generic compressed binary radix trie carrying EIP-8297&rsquo;s state embedding with the variable-length key scheme of EIP-7864&rsquo;s partitioned rewrite.</p>
+<div class="meta">
+  <span><a href="./eip-8297.html">EIP-8297 (draft)</a></span>
+  <span><a href="./eip-7864.html">EIP-7864 (draft)</a></span>
+  <span>src/ethereum/binary_trie/</span>
+  <span>hash: BLAKE3 (not final)</span>
+</div>
+
+<h2 id="status">What this is</h2>
+<p>Ethereum wants blocks provable with validity proofs, and the Merkle Patricia Trie is the obstacle: hexary branching, RLP node encoding, Keccak, a tree-of-tries indirection, and monolithic code blobs make its witnesses enormous. The EIP&rsquo;s worst-case arithmetic: a 60M-gas block touching one byte each of many distinct unchunked contracts needs to reveal <strong>≈ 1.8 GB</strong> of proof data.</p>
+<p>EIP-8297 replaces all of it with a single binary tree — accounts, storage, <em>and</em> contract code in one structure — partitioned into <em>zones</em> by state category. This branch implements a <strong>variant that goes further than either published draft</strong>: the variable-length key scheme EIP-7864 adopted in its partitioned rewrite (PR&nbsp;<a href="https://github.com/ethereum/EIPs/pull/11832">11832</a>) — a full zone byte and untruncated digests instead of 4 zone bits squeezed into a fixed 32-byte key — on a tree rebuilt as a <strong>generic compressed radix trie</strong>: prefix-carrying branch nodes and full-key leaf nodes with domain-tagged hashing — no stem node type, and no separate extension node. Two modules:</p>
+<table>
+  <thead><tr><th>Module</th><th>Responsibility</th></tr></thead>
+  <tbody>
+    <tr><td><code>binary_trie/trie.py</code></td><td>The raw tree: variable-length prefix-free keys → 32-byte values, node types, merkleization, root computation. Knows nothing about Ethereum state.</td></tr>
+    <tr><td><code>binary_trie/embedding.py</code></td><td>The mapping of accounts, storage slots, and code chunks onto tree keys and 32-byte values: zones, key derivation, code chunkification.</td></tr>
+  </tbody>
+</table>
+<p>Tests mirror the split (<code>tests/test_binary_trie.py</code>, <code>tests/test_binary_trie_embedding.py</code>), with the EIP&rsquo;s insertion-based reference implementation ported (adapted to variable keys) as an in-test oracle — the spec code and the reference must produce identical roots.</p>
+
+<h2 id="running">Running the code</h2>
+<p>The implementation is pure Python — nothing to compile. The only build-ish steps are dependency resolution (<a href="https://docs.astral.sh/uv/">uv</a> manages the environment, including the <code>blake3</code> native wheel) and static checking. From a fresh clone:</p>
+<pre><code>git clone https://github.com/ethereum/execution-specs
+cd execution-specs
+git switch projects/binary-trie
+uv sync                       # creates .venv and installs all dependencies</code></pre>
+<p>Run the binary trie test suites (spec code cross-checked against the ported EIP reference implementation):</p>
+<pre><code>uv run pytest tests/test_binary_trie.py tests/test_binary_trie_embedding.py -v</code></pre>
+<p>Type-check the package (the repo runs strict mypy):</p>
+<pre><code>uv run mypy src/ethereum/binary_trie</code></pre>
+<p>Try it interactively — insert two keys sharing a stem and compute a root (a 33-byte stem plus sub-index byte, the account/code key shape):</p>
+<pre><code>$ uv run python
+&gt;&gt;&gt; from ethereum_types.bytes import Bytes, Bytes32
+&gt;&gt;&gt; from ethereum.binary_trie.trie import BinaryTrie, trie_set, root
+&gt;&gt;&gt; trie = BinaryTrie()
+&gt;&gt;&gt; stem = b"\x00" + b"\x42" * 32
+&gt;&gt;&gt; trie_set(trie, Bytes(stem + b"\x00"), Bytes32(b"\x01" * 32))
+&gt;&gt;&gt; trie_set(trie, Bytes(stem + b"\xff"), Bytes32(b"\x02" * 32))
+&gt;&gt;&gt; root(trie).hex()</code></pre>
+<p>Or derive state keys through the embedding:</p>
+<pre><code>&gt;&gt;&gt; from ethereum_types.bytes import Bytes20
+&gt;&gt;&gt; from ethereum.binary_trie.embedding import (
+...     address20_to_address32, get_tree_key_for_basic_data)
+&gt;&gt;&gt; addr = address20_to_address32(Bytes20(b"\xaa" * 20))
+&gt;&gt;&gt; get_tree_key_for_basic_data(addr).hex()  # 34 bytes; first byte 00 = account zone</code></pre>
+<p>The full static suite CI runs is <code>just static</code> (requires <code>just</code> ≥ 1.40; the individual commands are <code>ruff check</code>, <code>ruff format --check</code>, <code>mypy</code>, <code>codespell</code>, <code>vulture</code>, and <code>ethereum-spec-lint</code>, all via <code>uv run</code>).</p>
+
+<h2 id="tree">The tree: a compressed binary radix trie</h2>
+<p>The entire public contract is a flat map: <code>trie_set(trie, key, value)</code> and <code>trie_get(trie, key)</code> where the value is exactly 32 bytes and the key is variable-length bytes, plus <code>root(trie)</code> reducing the whole map to one hash. No RLP, and no node type with Ethereum semantics.</p>
+<p>Two node types make up the tree: a <strong>branch</strong> splits on one bit and carries the run of bits every key below it shares (there is no separate extension node — the prefix lives on the branch, after eth-act&rsquo;s <a href="https://github.com/eth-act/zkvm-ethereum-mpt">zkvm-ethereum-mpt</a> representation), and a <strong>leaf</strong> holds one key&rsquo;s value, committing its <em>full key</em> so its meaning never depends on the path taken to reach it. The structure is <strong>canonical by construction, not by rule</strong>: a branch must have two non-empty subtrees, which <em>forces</em> its prefix to be exactly the shared run — a shorter prefix would leave every key agreeing on the split bit, emptying one side. A non-canonical tree is unrepresentable, so one committed state has exactly one node structure and one root, and proof verifiers have no well-formedness side-conditions to enforce.</p>
+<p>One requirement replaces the old fixed-size check: keys must be <strong>prefix-free</strong> — a leaf ends a path, so a longer key could never pass through the position a shorter one terminates at. The embedding guarantees it by giving every key of a zone one fixed length; the tree asserts it while splitting keys, where a violation surfaces as a key running out of bits before separating from its group.</p>
+
+<figure>
+  <div class="scroller">
+  <svg viewBox="0 0 640 250" width="640" role="img" aria-label="Radix trie for three keys sharing a stem: a branch carrying the stem bits as its prefix, a branch carrying six shared bits over two leaves, and a lone leaf">
+    <g stroke="var(--rule)" stroke-width="1.5" fill="none">
+      <line x1="320" y1="48" x2="180" y2="88"/>
+      <line x1="320" y1="48" x2="470" y2="88"/>
+      <line x1="180" y1="116" x2="92" y2="156"/>
+      <line x1="180" y1="116" x2="278" y2="156"/>
+    </g>
+    <g font-size="11" fill="var(--ink-faint)">
+      <text x="216" y="72">next bit = 0</text>
+      <text x="404" y="72">next bit = 1</text>
+      <text x="112" y="140">0</text>
+      <text x="242" y="140">1</text>
+    </g>
+    <rect x="216" y="18" width="208" height="30" rx="6" fill="var(--zone-code-bg)" stroke="var(--zone-code)"/>
+    <text x="320" y="37" text-anchor="middle" font-size="11" fill="var(--zone-code)">Branch · prefix: stem bits</text>
+    <rect x="84" y="88" width="192" height="30" rx="6" fill="var(--zone-code-bg)" stroke="var(--zone-code)"/>
+    <text x="180" y="107" text-anchor="middle" font-size="11" fill="var(--zone-code)">Branch · prefix: 000000</text>
+    <rect x="390" y="88" width="160" height="30" rx="6" fill="var(--zone-account-bg)" stroke="var(--zone-account)"/>
+    <text x="470" y="107" text-anchor="middle" font-size="11" fill="var(--zone-account)">Leaf(stem ‖ 0x80)</text>
+    <rect x="14" y="156" width="156" height="30" rx="6" fill="var(--zone-account-bg)" stroke="var(--zone-account)"/>
+    <text x="92" y="175" text-anchor="middle" font-size="11" fill="var(--zone-account)">Leaf(stem ‖ 0x00)</text>
+    <rect x="200" y="156" width="156" height="30" rx="6" fill="var(--zone-account-bg)" stroke="var(--zone-account)"/>
+    <text x="278" y="175" text-anchor="middle" font-size="11" fill="var(--zone-account)">Leaf(stem ‖ 0x01)</text>
+    <text x="320" y="228" text-anchor="middle" font-size="10" fill="var(--ink-faint)">three keys sharing a stem, sub-indices 0x00, 0x01, 0x80 — two node types, no empty siblings</text>
+  </svg>
+  </div>
+  <figcaption>The canonical form for three keys sharing a stem. Each branch carries the run of bits shared below it as its own prefix — the stem survives only as the top branch&rsquo;s prefix — and lone keys are leaves committing their full keys. Five nodes total where the stem-node design used one stem node plus a fixed 256-leaf subtree.</figcaption>
+</figure>
+
+<h3>Merkleization rules — domain-separated</h3>
+<ul>
+  <li><strong>Leaf</strong> → <code>H(0x00 ‖ full_key ‖ value)</code></li>
+  <li><strong>Branch</strong> → <code>H(0x01 ‖ bit_count<sub>2B</sub> ‖ packed_prefix_bits ‖ left ‖ right)</code></li>
+  <li><strong>Empty trie</strong> → 32 zero bytes (a sentinel, not a hash output).</li>
+</ul>
+<p>The tag byte and the explicit bit count are load-bearing, not cosmetic. The tags keep the two preimage kinds apart even where their lengths coincide, so a leaf can never be re-presented as a branch or vice versa; the count keeps prefixes injective, since without it a prefix of <code>0110</code> and one of <code>01100</code> would pack to the same padded byte and two different trees would share a root. Fusing the prefix into the branch also means one hash per compressed run instead of the two an extension-plus-branch pair would cost. And a side effect of canonical form: branches always have two real children, so <strong>empty siblings do not exist</strong> — the old zero-collapse rule is gone, and every sibling in a witness is a real hash.</p>
+
+<h3>The maximum key length, derived from the count field</h3>
+<p>Any finite length field creates a bound somewhere; the design choice is only where to surface it. Here is the chain:</p>
+<ol>
+  <li><strong>The encoding fact.</strong> The bit count is two bytes, so the largest representable prefix is <code>2¹⁶ − 1 = 65 535</code> bits. A longer prefix has no encoding at all.</li>
+  <li><strong>The worst case a prefix can be forced to.</strong> A prefix is a run shared by at least two keys, ending at their first differing bit — the split bit, which is <em>not</em> part of the prefix. Two distinct <code>L</code>-byte keys can agree on everything except their final bit, forcing a prefix of <code>8L − 1</code> bits. (Keys of different lengths must diverge within the shorter one — anything else is a prefix violation — so the shorter length governs.)</li>
+  <li><strong>Solve.</strong> <code>8L − 1 ≤ 65 535</code> gives <code>L ≤ 8 192</code> bytes, and the bound is exactly tight: two 8 192-byte keys differing only in their last bit need a prefix of precisely 65 535 bits.</li>
+</ol>
+<p>Hence <code>MAX_KEY_LENGTH = 8192</code>, enforced unconditionally in <code>trie_set</code>. The placement is the point: a too-long key is harmless <em>alone</em> (it becomes a leaf, whose preimage has no count field) and only breaks the encoding when a second long key shares enough bits with it — a content-dependent failure deep inside merkleization, dependent on what the key&rsquo;s neighbours happen to be. Checking at insertion converts that into an unconditional contract at the boundary; the assert inside <code>encode_bit_prefix</code> remains only as a backstop restating this derivation. The embedding&rsquo;s longest key is 66 bytes, so the ceiling carries ~124× headroom — it exists to make the encoding&rsquo;s implicit assumption explicit, not because anything approaches it.</p>
+
+<h2 id="zones">Zones: the partition lives inside the key</h2>
+<p>The zone is not metadata stored next to a key — it <em>is</em> the first byte of the key. Because the trie consumes key bits MSB-first, forcing a category&rsquo;s keys to share their first byte gives every zone its own exact region of the key space, and with it its own region of the tree. (Under radix compression the zone boundary need not coincide with a physical node — a branch&rsquo;s prefix may swallow the zone bits along with whatever follows them — but the region of keys under the prefix stays exact, which is what sync and expiry schemes actually operate on.)</p>
+<p>Keys are variable length, and that is what makes the full-byte label affordable: the zone byte is <em>prepended</em> to the key rather than carved out of a fixed stem, so digests keep their entire 256-bit width and a zone&rsquo;s one-byte-wide prefix says nothing about its capacity — every zone&rsquo;s key space is unbounded behind its label. Prefix-freeness comes free of charge: keys of the same zone all have the same length, and keys of different zones differ in byte 0.</p>
+<p>The lengths are not left implicit. The embedding declares them as documented constants — <code>ACCOUNT_KEY_LENGTH</code> and <code>CODE_KEY_LENGTH</code> (34) and <code>STORAGE_KEY_LENGTH</code> (66) — and every derivation function asserts the length of the key it constructs against its zone&rsquo;s constant. The two halves of the prefix-freeness argument each enforce their own side: the embedding proves it only emits fixed-length keys per zone, and the tree asserts no key prefixes another while splitting keys in <code>root()</code>. A future change to the digest width fails loudly at the first key derivation instead of silently reshaping the tree.</p>
+
+<figure>
+  <div class="scroller">
+    <div class="keybar" role="img" aria-label="34-byte account/code key layout: zone byte, 32-byte digest, sub-index byte">
+      <div class="seg z-account" style="flex: 0 0 5.5rem;"><span class="lab">zone</span><span class="sub">1 byte</span></div>
+      <div class="seg z-hash" style="flex: 1 1 auto;"><span class="lab">H(address) or H(code_hash ‖ index)</span><span class="sub">32 bytes — untruncated</span></div>
+      <div class="seg z-sub" style="flex: 0 0 7.5rem;"><span class="lab">sub-index</span><span class="sub">1 byte</span></div>
+    </div>
+    <div class="brace">
+      <span style="flex: 1 1 auto; text-align: center; border-top: 1px solid var(--rule); padding-top: 0.25rem; margin-right: 8rem;">33-byte stem — account and code keys, 34 bytes total</span>
+    </div>
+  </div>
+  <div class="scroller" style="margin-top: 0.9rem;">
+    <div class="keybar" role="img" aria-label="66-byte storage key layout: zone byte 0xFF, two 32-byte digests, sub-index byte">
+      <div class="seg z-storage-seg z-account" style="flex: 0 0 5.5rem; background: var(--zone-storage-bg); color: var(--zone-storage);"><span class="lab">0xFF</span><span class="sub">1 byte</span></div>
+      <div class="seg z-hash" style="flex: 1 1 auto;"><span class="lab">H(address)</span><span class="sub">32 bytes — account bucket</span></div>
+      <div class="seg z-hash" style="flex: 1 1 auto;"><span class="lab">H(address ‖ tree_index)</span><span class="sub">32 bytes — group spread</span></div>
+      <div class="seg z-sub" style="flex: 0 0 7.5rem;"><span class="lab">sub-index</span><span class="sub">1 byte</span></div>
+    </div>
+    <div class="brace">
+      <span style="flex: 1 1 auto; text-align: center; border-top: 1px solid var(--rule); padding-top: 0.25rem; margin-right: 8rem;">65-byte stem — storage keys, 66 bytes total</span>
+    </div>
+  </div>
+  <figcaption>The two key shapes. Zone byte first, then one or two full digests, then the sub-index. Nothing is truncated; every key of a zone has one fixed length, keeping stems prefix-free.</figcaption>
+</figure>
+
+<table>
+  <thead><tr><th>Zone</th><th>Byte</th><th>Holds</th><th>Key length</th></tr></thead>
+  <tbody>
+    <tr><td><span class="zone-chip zc-account">account 0</span></td><td><code>0x00</code></td><td>Account headers: basic data, code hash, first 64 slots, first 128 code chunks</td><td><code>ACCOUNT_KEY_LENGTH</code> = 34</td></tr>
+    <tr><td><span class="zone-chip zc-code">code 1</span></td><td><code>0x01</code></td><td>Overflow code, content-addressed by code hash</td><td><code>CODE_KEY_LENGTH</code> = 34</td></tr>
+    <tr><td><span class="zone-chip zc-free">2 – 254</span></td><td><code>0x02</code>–<code>0xFE</code></td><td>Reserved for future state categories</td><td>—</td></tr>
+    <tr><td><span class="zone-chip zc-storage">storage 255</span></td><td><code>0xFF</code></td><td>Overflow storage (slot 64 and up), bucketed per account</td><td><code>STORAGE_KEY_LENGTH</code> = 66</td></tr>
+  </tbody>
+</table>
+<p>Storage sits at the far end of the byte, but its slice of the top-level key space is the same 1/256 as everyone else&rsquo;s — under variable keys, capacity lives behind the prefix, not in its width. Contrast with published EIP-8297, where partitioning inside a fixed 32-byte key forced storage to claim half the tree with a 1-bit label just to keep enough hash bits.</p>
+
+<h2 id="embedding">The embedding: state → keys and 32-byte values</h2>
+<p>The tree is deliberately ignorant of Ethereum. The <em>embedding</em> is the rulebook that injects accounts, storage, and code into the flat key space — a set of pure key-derivation functions plus two value encoders. Same tree, different embedding, would be a different protocol. Since the radix refactor even the <strong>stem</strong> is pure embedding vocabulary, defined here and nowhere else: a key&rsquo;s stem is <em>every byte except its final sub-index byte</em>. Keys sharing a stem form one group of up to 256 co-located values; the tree has no stem node type (and no <code>Stem</code> type in code — the word names a concept, not a structure), the stem surviving only as a shared bit prefix carried by the branch below it, so a group&rsquo;s values still open together in one branch. One named constant keeps the old vocabulary for EIP-table fidelity: <code>STEM_SUBTREE_WIDTH</code> is now simply the maximum group size — the sub-index byte&rsquo;s space — with no fixed subtree behind it; a group commits through only its occupied leaves.</p>
+
+<h3>The account header stem</h3>
+<p>One stem per account, in the account zone, derived from the address alone: <code>get_tree_key(ACCOUNT_ZONE, key_hash(address), sub_index)</code>. Its 256 sub-indices are budgeted so the data touched together in typical transactions sits under one branch opening:</p>
+<table>
+  <thead><tr><th class="num">Sub-index</th><th>Contents</th></tr></thead>
+  <tbody>
+    <tr><td class="num">0</td><td><code>basic_data</code> — version, code size, nonce, balance packed big-endian into one leaf</td></tr>
+    <tr><td class="num">1</td><td><code>code_hash</code> — hash of the contiguous bytecode (see below)</td></tr>
+    <tr><td class="num">2 – 63</td><td>reserved</td></tr>
+    <tr><td class="num">64 – 127</td><td>storage slots 0 – 63</td></tr>
+    <tr><td class="num">128 – 255</td><td>code chunks 0 – 127 (first ~4 KiB of code)</td></tr>
+  </tbody>
+</table>
+
+<h3>Overflow storage</h3>
+<p>Slot 64 and beyond move to the storage zone. The stem recipe is <code>0xFF&hairsp;‖&hairsp;H(address)&hairsp;‖&hairsp;H(address&hairsp;‖&hairsp;tree_index)</code>: two full digests. The first gathers <strong>all of an account&rsquo;s overflow storage under one contiguous subtree</strong> — the unit future expiry and partial-statelessness schemes prune or sync — with the full 256-bit prefix ruling out bucket collisions outright, not just probabilistically. The second spreads the account&rsquo;s 256-slot groups within that bucket; binding it to the address too means storage keys ground to sit close together in one contract can&rsquo;t be reused to attack another (the DoS rationale stated in the 7864 rewrite).</p>
+
+<h3>Value encodings</h3>
+<p>Everything is squeezed into exactly 32 bytes. <code>encode_basic_data</code> packs four scalars into fixed big-endian fields (4 reserved ‖ 4 code-size ‖ 8 nonce ‖ 16 balance). <code>chunkify_code</code> slices bytecode into 31-byte pieces, each prefixed by one byte counting how many of its leading bytes are push-data spilling in from the previous chunk — so any single chunk plus its Merkle branch can be interpreted (jump destinations included) without fetching its neighbors. That property is what makes per-chunk code proofs sound.</p>
+
+<h2 id="code">Where code lives — and why there is no code root</h2>
+<p>Code is split across two homes. Chunks 0–127 sit in the account header stem (sub-indices 128–255). Chunks 128+ go to the code zone in groups of 256, keyed by <code>get_tree_key(CODE_ZONE, key_hash(code_hash ‖ tree_index), sub_index)</code> — addressed by <em>what the code is</em>, not who deployed it, so identical bytecode deployed a thousand times occupies one set of leaves. Most deployed contracts are copies of a few templates; this deduplicates all of them past the first ~4 KiB.</p>
+<p>There is deliberately <strong>no per-contract code commitment</strong>. In the MPT, code lived outside the trie and <code>code_hash</code> was its only commitment. Here the inversion is total: the chunk leaves <em>are</em> the committed representation, covered by the single tree root like any storage slot. The <code>code_hash</code> leaf survives as plain data for two jobs: <code>EXTCODEHASH</code> must keep answering with the hash of contiguous bytecode, and the overflow-chunk keys are derived from it. Its consistency with the chunks is an invariant the state transition maintains, not something the tree structure enforces.</p>
+
+<h2 id="proving">Proving code chunks: derivation, not selection</h2>
+<p>Two questions come up immediately when code has no commitment of its own, and both have answers that are easy to get wrong on first read.</p>
+
+<h3>&ldquo;To prove against <code>code_hash</code>, don&rsquo;t I need all of the code?&rdquo;</h3>
+<p>No — because <code>code_hash</code> plays two different roles in a chunk proof, and neither uses it <em>as a hash</em>:</p>
+<ul>
+  <li><strong>As a proven value</strong>: one Merkle branch shows the state root commits to the 32-byte value <code>X</code> at the account&rsquo;s code-hash leaf. Its keccak preimage is never touched — the branch proves &ldquo;this account&rsquo;s code identity is <code>X</code>,&rdquo; treating <code>X</code> as an opaque identifier.</li>
+  <li><strong>As key material</strong>: knowing <code>X</code>, the verifier <em>computes</em> the chunk&rsquo;s key — <code>get_tree_key(CODE_ZONE, key_hash(X ‖ tree_index), sub_index)</code>, pure arithmetic on 32 bytes — and checks a second branch there.</li>
+</ul>
+<p>The chunk&rsquo;s integrity flows from the <strong>state root</strong>, not from recomputing <code>keccak(code)</code>: the tree committed to every chunk individually at deploy time. The caveat worth knowing: the proof establishes &ldquo;the tree stores this value where chunk <code>i</code> of code-with-identity-<code>X</code> lives&rdquo; — it does <em>not</em> re-verify that the chunks reassemble to a bytecode whose keccak is <code>X</code>. That correspondence is an invariant the state transition welded in at deploy, when chunks and hash were written from one blob. The full bytecode is therefore needed only where that invariant is <em>established</em>, never where it is <em>used</em>: once per deploy inside a validity proof (hash + chunkify the returned code), once per account in the EIP-7748 migration, and by any verifier whose only trust anchor is <code>code_hash</code> itself rather than a state root — which is precisely the verifier this design tells you not to be.</p>
+
+<h3>&ldquo;How do I know the chunk I picked belongs to this account?&rdquo;</h3>
+<p>You never pick — <strong>the verifier derives every key itself, starting from the address</strong>, so nothing else can be presented. Belonging is enforced by key computation, not inspection:</p>
+<ul>
+  <li><strong>Chunks 0–127</strong> (header): direct — the key is <code>get_tree_key(ACCOUNT_ZONE, key_hash(address), CODE_OFFSET + i)</code>. The address is in the derivation; another account&rsquo;s chunk sits under a different stem by construction.</li>
+  <li><strong>Chunks 128+</strong> (content-addressed): a two-link chain whose <em>anchor still lives in the header</em>, even though the chunk does not — the header&rsquo;s role shifts from containing the chunk to supplying the link. From the <em>address</em>, derive the code-hash leaf&rsquo;s key (account zone) and verify that branch, yielding <code>X</code>; from the <em>proven</em> <code>X</code> and the chunk number (which fixes <code>tree_index</code> and <code>sub_index</code> arithmetically), derive the chunk key (code zone) and verify the second branch. Both branches must verify against the same root at keys the verifier computed — substituting foreign code requires either a wrong <code>X</code> (blocked by link one) or a hash collision. The code zone itself contains no account information at all: nothing in it can prove ownership, and that is the mechanism of dedup — many accounts&rsquo; code-hash leaves bridge to the same code-zone region. In practice the header branch is nearly free, since a transaction touching the account opens the header stem for basic data anyway and the code-hash leaf shares that branch.</li>
+</ul>
+<pre><code>address ──derive──▶ key of code-hash leaf ──prove──▶ X
+X, i    ──derive──▶ key of chunk leaf     ──prove──▶ chunk</code></pre>
+<p>Two refinements complete the picture. First, &ldquo;belongs to this account&rdquo; is deliberately <em>non-exclusive</em> for overflow chunks: identical bytecode deployed twice shares physical leaves, so the same chunk legitimately belongs to every account whose code-hash leaf reaches it — that is the dedup working, while header chunks stay exclusively per-account. Second, full EVM semantics usually want a third leaf: <code>code_size</code> from the basic-data leaf, to know whether chunk <code>i</code> is within the code at all (reads past the end return zeros). It lives in the <em>same header stem</em> as the code-hash leaf, sharing nearly the whole branch already being opened — the header co-location earning its keep again.</p>
+<p>The shape to remember: the value proven by one branch feeds the key derivation of the next. This <em>dependent-proof</em> structure is something the future witness format must be able to express, and it is unique to the content-addressed part of the design.</p>
+
+<h2 id="decisions">Design decisions and why</h2>
+
+<div class="decision">
+  <p class="d-title">Binary branching (arity 2)</p>
+  <p>Witness size is <code>32·(k−1)·log&hairsp;N / log&hairsp;k</code> — minimized at k = 2. For 2<sup>24</sup> elements: 768 bytes per branch binary, versus 1 152 (k = 4), 1 792 (k = 8), 2 880 (k = 16), and the MPT&rsquo;s ~5 760. Halving the branching factor is the single biggest witness win available.</p>
+</div>
+
+<div class="decision">
+  <p class="d-title">One tree instead of a tree of tries</p>
+  <p>Database access, caching, sync, proof creation, and gas rules all operate on one key/value abstraction. And with no <code>storage_root</code> stored in any leaf, writing an account&rsquo;s nonce and one of its slots are <em>independent</em> writes whose branches only meet near the root — root recomputation parallelizes across zones, across accounts, and across stems.</p>
+</div>
+
+<div class="decision">
+  <p class="d-title">Variable-length, prefix-free keys</p>
+  <p>Adopted from EIP-7864&rsquo;s partitioned rewrite, replacing published 8297&rsquo;s fixed 32-byte keys. The zone byte is prepended instead of displacing digest bits, so nothing is truncated, no collision-margin analysis is needed, and the bit-packing machinery vanishes from the embedding. The price: prefix-freeness becomes an invariant rather than a length check — so the embedding declares per-zone key lengths as constants and asserts them at every derivation, while the tree asserts no key prefixes another when splitting. Preimage framing, the other cost, is handled by the radix design&rsquo;s tagged hashing.</p>
+</div>
+
+<div class="decision">
+  <p class="d-title">A generic radix trie — no stem nodes, no extension nodes</p>
+  <p>Stem nodes and their fixed 256-leaf subtrees are replaced by just two node types — prefix-carrying branches and full-key leaves, following eth-act&rsquo;s zkvm-ethereum-mpt representation, but fused into the commitment itself rather than only the in-memory form. Branch prefixes compress the manufactured runs inside <code>H(address)</code> storage buckets (~250 empty-sibling levels → one node) and cap adversarial prefix grinding at O(1) added proof depth instead of O(shared bits); sparse stems commit through only their occupied structure. The decisive property of the fusion: <strong>canonical form is unrepresentable to violate</strong> — two-non-empty-children forces every prefix to be exactly the shared run, so the verifier obligation to reject non-canonical structure disappears with the extension node itself. Domain-tagged hashing remains mandatory (variable-length preimages can no longer be framed by accident). The honest cost: fixed 256-leaf subtrees were maximally SNARK-friendly; variable structure reintroduces data-dependent branching in circuits, and splitting a run now rewrites the surviving branch&rsquo;s hash, which client node-dedup storage will notice.</p>
+</div>
+
+<div class="decision">
+  <p class="d-title">Zones for structure without a side registry</p>
+  <p>Every zone owns an exact key-space region behind its byte, and an account&rsquo;s storage bucket owns the region behind its <code>H(address)</code> prefix — the units that state expiry, partial statelessness, and separate sync operate on, with no auxiliary structure needed. The chain problem this used to carry (stems inside a bucket sharing up to 256 manufactured prefix bits, producing long empty-sibling runs) is closed by the radix refactor: one branch prefix carries the entire shared run.</p>
+</div>
+
+<div class="decision">
+  <p class="d-title">Content-addressed overflow code</p>
+  <p>Keying big code by <code>code_hash</code> removes mass duplication from state. The first 128 chunks stay per-account so an account&rsquo;s core data, hot storage, and initial code expire together in one step with no reference counting; only the shared overflow leaves need refcounts or a sweep when expiry arrives.</p>
+</div>
+
+<div class="decision">
+  <p class="d-title">Hash function left open — BLAKE3 for now</p>
+  <p>Candidates are BLAKE3 (fast native, reasonable in-circuit), Keccak (already in Ethereum, costly to prove), and Poseidon2 (excellent in-circuit, security analysis ongoing). Because the tree depends only on a hash — no elliptic curves — it stays post-quantum sound where Verkle&rsquo;s curve-based stack does not; fast recursive proving is expected to recover the prover speed that was Verkle&rsquo;s main advantage.</p>
+</div>
+
+<h2 id="eels">Decisions specific to this port</h2>
+<p>The execution specs are a <em>specification</em> — readability wins over performance, and a few choices here follow from that plus review hardening:</p>
+<ul>
+  <li><strong>Repo-MPT-shaped API.</strong> <code>BinaryTrie</code> / <code>trie_set</code> / <code>trie_get</code> / <code>copy_trie</code> / <code>root</code> mirror <code>merkle_patricia_trie.py</code>, so a future fork integration swaps tries without changing call shapes.</li>
+  <li><strong>The hash sits behind one function.</strong> Since the EIP marks the hash as not final, <code>blake3_hash</code> in <code>trie.py</code> is the only place BLAKE3 is invoked; merkleization and key derivation both delegate to it, making a future swap a one-line edit.</li>
+  <li><strong>Guards are kept, not typed away.</strong> <code>trie_set</code> asserts a non-empty key and a 32-byte value, every embedding derivation asserts its constructed key matches its zone&rsquo;s declared length constant, and the tree asserts key-level prefix-freeness while splitting — a key running out of bits while still grouped with others <em>is</em> a prefix violation, so each check lives exactly where its property matters.</li>
+  <li><strong>Canonical form comes free from the rebuild.</strong> The dict-backed spec rebuilds the node structure from scratch on every <code>root()</code>, so the insert/split/merge/delete machinery clients need — and the canonicity bugs that live in delete-time merging — simply do not exist in the spec.</li>
+  <li><strong>An insertion-based radix reference is the test oracle.</strong> Independently written (standard descend/split insertion, its own tagged hashing), it cross-checks every root over randomized 32-byte and mixed 34/66-byte key sets — and because it builds incrementally while the spec rebuilds, agreement on every root is also a check that both constructions produce the same canonical structure.</li>
+</ul>
+
+<h2 id="7864">Where this variant sits between the two EIPs</h2>
+<p>In July 2026 <a href="./eip-7864.html">EIP-7864</a> — the older <em>unified</em> binary tree that 8297 builds on — was rewritten to a partitioned design with variable-length keys (PR&nbsp;<a href="https://github.com/ethereum/EIPs/pull/11832">ethereum/EIPs#11832</a>). This branch initially implemented published <a href="./eip-8297.html">EIP-8297</a> verbatim (fixed 32-byte keys, 4-bit zones, stem nodes), then pivoted to the rewrite&rsquo;s key scheme, and finally replaced the stem-node tree itself with a compressed radix trie — keeping 8297&rsquo;s choices wherever they are orthogonal. What was taken from where:</p>
+
+<div class="scroller">
+<table style="min-width: 44rem;">
+  <thead><tr><th>Dimension</th><th>This branch</th><th>Taken from</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Key shape</td>
+      <td>Variable-length, prefix-free: zone byte ‖ full digest(s) ‖ sub-index (34 B account/code, 66 B storage)</td>
+      <td>7864 rewrite</td>
+    </tr>
+    <tr>
+      <td>Partition label</td>
+      <td>Full byte — account 0, code 1, storage 255, 2–254 reserved</td>
+      <td>7864 rewrite</td>
+    </tr>
+    <tr>
+      <td>Storage locality</td>
+      <td><code>H(address)&hairsp;‖&hairsp;H(address ‖ tree_index)</code> — an account&rsquo;s entire overflow storage in one contiguous subtree; double hash blocks cross-contract grinding reuse</td>
+      <td>7864 rewrite</td>
+    </tr>
+    <tr>
+      <td>Code addressing</td>
+      <td>Content-addressed by <code>code_hash</code> — identical bytecode shares leaves (the rewrite keys code per account; dedup is orthogonal to key shape, so it stays)</td>
+      <td>8297</td>
+    </tr>
+    <tr>
+      <td>Header co-location</td>
+      <td>64 storage slots + 128 code chunks in the header stem (the rewrite shrinks this to 4 + 16; a separate decision, not adopted)</td>
+      <td>8297</td>
+    </tr>
+    <tr>
+      <td>Tree &amp; merkleization</td>
+      <td>Compressed radix trie — prefix-carrying branches and full-key leaves, domain-tagged hashing, canonical form unrepresentable to violate. Replaces both drafts&rsquo; stem-subtree merkleization (direction from the later binary-trie discussions and eth-act&rsquo;s zkvm-ethereum-mpt; EIP-3102 lineage)</td>
+      <td>Neither</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>What the pivots gave up is published 8297&rsquo;s uniformity stance: state is no longer spread evenly — an account&rsquo;s storage deliberately concentrates in one subtree for syncability and expiry, the trade the 7864 rewrite made explicitly when it deleted its uniformity rationale. The two design points the variable-key pivot surfaced — preimage framing and the empty-sibling chains inside storage buckets — are both <em>answered by the radix refactor</em> (tagged hashing; prefix compression), but the answers themselves now belong upstream: neither published draft specifies tagged node commitments, prefix compression, or the fused-branch representation that makes canonical form unrepresentable to violate.</p>
+
+<div class="note"><p><strong>Caveat:</strong> both EIPs are drafts and this branch is deliberately ahead of both — no published spec matches it exactly. The hash function and gas calibration (EIP-4762&rsquo;s branch costs assume shallower trees) are still in motion. This page describes the design as implemented on <code>projects/binary-trie</code> today.</p></div>
+
+</article>
+</main>
+</div>
+</body>
+</html>

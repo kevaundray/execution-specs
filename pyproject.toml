@@ -27,6 +27,7 @@ dependencies = [
     "ethereum-types>=0.4.1,<0.5",
     "ethereum-rlp>=0.1.6,<0.2",
     "cryptography>=45.0.1,<46",
+    "blake3>=1.0,<2",
     "platformdirs>=4.2,<5",
     "libcst>=1.8,<2",
 ]
@@ -48,6 +49,7 @@ packages = [
     "ethereum_spec_tools.new_fork",
     "ethereum_spec_tools.new_fork.codemod",
     "ethereum",
+    "ethereum.binary_trie",
     "ethereum.forks.frontier",
     "ethereum.forks.frontier.utils",
     "ethereum.forks.frontier.vm",

@@ -1,0 +1,775 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EIP-8297: Partitioned Binary Tree</title>
+<style>
+  :root {
+    --bg: #F7F8FA; --surface: #FFFFFF; --ink: #1C2330; --ink-soft: #4A5568;
+    --ink-faint: #8A94A6; --rule: #DCE1E8; --accent: #0E7A6E;
+    --code-bg: #EEF1F5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171C; --surface: #1B1F26; --ink: #E2E7EE; --ink-soft: #A8B2C1;
+      --ink-faint: #6C7686; --rule: #2C323C; --accent: #52C2B2;
+      --code-bg: #21262F;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171C; --surface: #1B1F26; --ink: #E2E7EE; --ink-soft: #A8B2C1;
+    --ink-faint: #6C7686; --rule: #2C323C; --accent: #52C2B2;
+    --code-bg: #21262F;
+  }
+  :root[data-theme="light"] {
+    --bg: #F7F8FA; --surface: #FFFFFF; --ink: #1C2330; --ink-soft: #4A5568;
+    --ink-faint: #8A94A6; --rule: #DCE1E8; --accent: #0E7A6E;
+    --code-bg: #EEF1F5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: Charter, "Bitstream Charter", "Iowan Old Style", Georgia, serif;
+    font-size: 1.0625rem; line-height: 1.65;
+  }
+  main { max-width: 68ch; margin: 0 auto; padding: 2.5rem 1.5rem 5rem; }
+  .eyebrow {
+    font-family: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    text-transform: uppercase; letter-spacing: 0.11em; font-size: 0.75rem;
+    font-weight: 600; color: var(--accent); margin: 0 0 0.5rem;
+  }
+  .backlink {
+    font-family: -apple-system, system-ui, sans-serif; font-size: 0.8rem;
+    margin-bottom: 2rem; display: block;
+  }
+  h1, h2, h3, h4 {
+    font-family: -apple-system, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+    text-wrap: balance; line-height: 1.2; letter-spacing: -0.015em;
+  }
+  h1 { font-size: 1.9rem; font-weight: 700; margin: 0 0 0.75rem; }
+  h2 { font-size: 1.4rem; font-weight: 650; margin: 3rem 0 0.9rem;
+       padding-top: 1.4rem; border-top: 1px solid var(--rule); }
+  h3 { font-size: 1.08rem; font-weight: 650; margin: 2rem 0 0.6rem; }
+  h4 { font-size: 0.98rem; font-weight: 650; margin: 1.6rem 0 0.5rem; }
+  p { margin: 0 0 1.05rem; }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+               font-size: 0.86em; }
+  code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
+  pre { background: var(--code-bg); border: 1px solid var(--rule); border-radius: 8px;
+        padding: 0.9rem 1.1rem; overflow-x: auto; line-height: 1.55; margin: 0 0 1.05rem; }
+  pre code { background: none; padding: 0; }
+  .tablewrap { overflow-x: auto; margin: 0 0 1.05rem; }
+  table {
+    border-collapse: collapse; width: 100%;
+    font-family: -apple-system, "SF Pro Text", system-ui, sans-serif;
+    font-size: 0.875rem;
+  }
+  th, td { text-align: left; padding: 0.5rem 0.9rem 0.5rem 0;
+           border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em;
+       color: var(--ink-faint); font-weight: 600; }
+  img { max-width: 100%; height: auto; border: 1px solid var(--rule); border-radius: 8px; }
+  ul, ol { margin: 0 0 1.05rem; padding-left: 1.4rem; }
+  li { margin-bottom: 0.35rem; }
+  li::marker { color: var(--ink-faint); }
+  .frontmatter {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.78rem;
+    color: var(--ink-soft); border: 1px solid var(--rule); border-radius: 8px;
+    padding: 0.9rem 1.1rem; margin: 0 0 2rem; overflow-x: auto;
+  }
+  .frontmatter dt { color: var(--ink-faint); float: left; clear: left;
+                    width: 8.5rem; }
+  .frontmatter dd { margin-left: 9rem; margin-bottom: 0.2rem; }
+  .frontmatter dl { margin: 0; }
+  blockquote { border-left: 3px solid var(--rule); margin: 0 0 1.05rem;
+               padding: 0.1rem 0 0.1rem 1.1rem; color: var(--ink-soft); }
+</style>
+</head>
+<body>
+<main>
+<p class="eyebrow">Local snapshot &middot; fetched 2026-07-14 from ethereum/EIPs</p>
+<a class="backlink" href="./index.html">&larr; Back to binary trie implementation notes</a>
+<h1>EIP-8297: Partitioned Binary Tree</h1><div class="frontmatter"><dl><dt>eip</dt><dd>8297</dd><dt>title</dt><dd>Partitioned Binary Tree</dd><dt>author</dt><dd>Vitalik Buterin (@vbuterin), Guillaume Ballet (@gballet), Dankrad Feist (@dankrad), Ignacio Hagopian (@jsign), Kevaundray Wedderburn (@kevaundray), Tanishq Jasoria (@tanishqjasoria), Gajinder Singh (@g11tech), Danno Ferrin (@shemnon), Piper Merriam (@pipermerriam), Gottfried Herold (@GottfriedHerold), Wei Han Ng (@weiihann), Carlos Perez (@CPerezz)</dd><dt>status</dt><dd>Draft</dd><dt>type</dt><dd>Standards Track</dd><dt>category</dt><dd>Core</dd><dt>created</dt><dd>2026-06-11</dd><dt>requires</dt><dd>7612</dd></dl></div>
+<h2 id="abstract">Abstract</h2>
+<p>Introduce a new binary state tree to replace the hexary Patricia tries. Account
+and storage tries are merged into a single tree with 32-byte keys that also holds
+contract code. Account data is broken into independent leaves grouped by 256 to
+provide locality.</p>
+<p>The tree is partitioned into zones. The high 4 bits of every key are a zone
+identifier that labels the category of state the key holds: account headers,
+contract code, or storage. Storage takes the entire upper half of the zone space
+(any key with the high bit set), so it is rooted at depth 1 and occupies about half
+the tree. Account headers and code take fixed low zones, and the remaining low
+zones are reserved for future categories.</p>
+<p>Note: the hash function used in this draft is not final. The reference
+implementation uses BLAKE3 to reduce friction for clients experimenting with this
+EIP, but the choice remains open.</p>
+<h2 id="motivation">Motivation</h2>
+<p>Ethereum's long-term goal is to let blocks be proved with validity proofs so chain
+verification is as simple and fast as possible. Part of this work consists of proving the
+state read during EVM execution.</p>
+<p>The Merkle Patricia Trie (MPT) is unfriendly to validity proofs: it uses RLP for
+node encoding, Keccak for hashing, is a "tree of trees", and does not allow for the efficient proving of segments of bytecode. It also produces large Merkle proofs. As an example, the account trie today reaches a maximum depth of about 12, so the
+expected size of a single branch is <code>15 * 32 * 12 = 5760</code> bytes: 15 sibling hashes of
+32 bytes at each of the 12 levels. From a worst-case block perspective, spending all
+60M gas to touch a single byte of many distinct account codes, none of which is
+chunked, needs <code>60M/2400 * (12*480 + 64k) ≈ 1.8GB</code>. Here <code>2400</code> is the cheapest gas
+to touch a fresh account (the <a href="https://eips.ethereum.org/EIPS/eip-2930">EIP-2930</a> access-list address cost. A
+cold account access under <a href="https://eips.ethereum.org/EIPS/eip-2929">EIP-2929</a> is <code>2600</code>), <code>12*480</code> is the
+branch to that account, and <code>64k</code> is the <a href="https://eips.ethereum.org/EIPS/eip-7954">EIP-7954</a> 64 KiB code size
+limit that must be revealed in full to prove any single byte of unchunked code.</p>
+<p>A binary tree shrinks regular Merkle proofs, because proof size scales with
+<code>siblings * log_arity(N)</code> and arity 2 minimizes it. Switching from Keccak to a more
+proving-friendly hash improves circuit performance.</p>
+<p>Partitioning the tree into zones adds two properties on top of a flat unified
+tree:</p>
+<p><strong>Structural boundaries.</strong> A node at a known depth is always the root of a known
+category: all storage at depth 1, the account zone and code zone at depth 4, one
+account's storage bucket at depth 61. Protocols can reference these subtree roots
+as commitments without a side structure. This is what later proposals for state
+expiry and partial statelessness build on.</p>
+<p><strong>Code deduplication.</strong> Code beyond the first chunks is content-addressed by code
+hash rather than by account, so thousands of contracts deployed from the same
+factory share their code leaves instead of each storing a copy.</p>
+<h2 id="specification">Specification</h2>
+<p>The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in <a href="https://www.rfc-editor.org/rfc/rfc2119">RFC 2119</a> and <a href="https://www.rfc-editor.org/rfc/rfc8174">RFC 8174</a>.</p>
+<h3 id="notable-changes-from-the-hexary-structure">Notable changes from the hexary structure</h3>
+<ul>
+<li>The account and storage tries are merged into a single trie.</li>
+<li>RLP is no longer used.</li>
+<li>The account's code is chunked and included in the tree.</li>
+<li>Account data (balance, nonce, first storage slots, first code chunks) is
+  co-located to reduce branch openings.</li>
+</ul>
+<h3 id="notable-changes-from-eip-7864">Notable changes from EIP-7864</h3>
+<p><a href="https://eips.ethereum.org/EIPS/eip-7864">EIP-7864</a> specifies a flat unified binary tree where every key is
+<code>key_hash(address || tree_index)[:31] || sub_index</code>. This proposal keeps that
+tree, its node types, and its merkelization, and changes how keys are assigned:</p>
+<ul>
+<li>A 4-bit zone prefix is added to every stem. In EIP-7864 all of an account's
+  data (header, storage, code) is derived from its address and scattered through
+  the tree by <code>tree_index</code>. Here each category lives in its own zone.</li>
+<li>Overflow code (chunks at index 128 and above) moves to zone <code>0x1</code> and is keyed
+  by <code>code_hash</code> instead of by account, so contracts with identical bytecode share
+  leaves. EIP-7864 keys all code per account, storing a copy for every contract.</li>
+<li>Overflow storage (slots 64 and above) moves to the storage zone, where a stem is
+  the storage high bit, a 60-bit address prefix, and a 187-bit suffix. EIP-7864
+  uses <code>key_hash(address || tree_index)[:31]</code> with no per-account bucket boundary.</li>
+<li><code>MAIN_STORAGE_OFFSET</code> is removed. EIP-7864 offsets main storage by <code>256**31</code> to
+  keep it clear of the header and code region. Here the storage zone bit separates
+  storage structurally, so no numeric offset is needed.</li>
+<li>Non-storage stems are a 4-bit zone followed by a 244-bit hash. The hash is
+  truncated to 244 bits rather than EIP-7864's 248, since the zone takes the high
+  4 bits of the stem.</li>
+</ul>
+<p>The account header layout (<code>BASIC_DATA</code> packing, <code>CODE_HASH</code>, the first 64 storage
+slots, the first 128 code chunks), the code chunkification, and the four node types
+are unchanged from EIP-7864.</p>
+<h3 id="tree-structure">Tree structure</h3>
+<p>The tree stores key-value entries where both key and value are 32 bytes. The first
+31 bytes of the key are the entry stem, and the last byte is the sub-index within
+that stem. Two keys with the same stem live in the same group of 256 leaves.</p>
+<p><img alt="Image" src="https://eips.ethereum.org/assets/eip-8297/diagram.png"></p>
+<p>There are four node types:</p>
+<ul>
+<li><code>InternalNode</code> has <code>left_hash</code> and <code>right_hash</code>.</li>
+<li><code>StemNode</code> has <code>stem</code>, <code>left_hash</code>, and <code>right_hash</code>.</li>
+<li><code>LeafNode</code> has a <code>value</code> that is a 32-byte blob or empty.</li>
+<li><code>EmptyNode</code> represents an empty node or subtree.</li>
+</ul>
+<p>Keys are traversed in big-endian bit order. A key is expanded to a bit list by
+<code>_bytes_to_bits</code> (defined below), most significant bit (MSB) first: bit 0 of the
+path is the MSB of the first byte, and the last bit is the least significant bit
+(LSB) of the last byte. Depth <code>d</code> in the tree selects bit <code>d</code> of this list, so the
+zone identifier in the high 4 bits of the stem governs the top four levels.</p>
+<p>The path to a <code>StemNode</code> is the stem's 248 bits in this MSB-to-LSB order. From that
+node a subtree of 256 values is indexed by the last byte. The path does not use the
+full 248 bits: it contains the minimal number of <code>InternalNode</code>s needed to separate
+stems that share a prefix. Walking the path to insert a new stem ends on an
+<code>EmptyNode</code> (replace it with the stem) or a <code>StemNode</code> (create as many
+<code>InternalNode</code>s as the two stems share prefix bits). There are no extension nodes.</p>
+<p>This minimal-internal-node rule keeps the zone prefix cheap. Only a few low zones
+are populated, so the zone bits between the root and a populated zone collapse to
+the minimal set of internal nodes rather than a full four-level chain.</p>
+<pre><code class="language-python">def _bytes_to_bits(data: bytes) -&gt; list[int]:
+    return [(byte &gt;&gt; (7 - i)) &amp; 1 for byte in data for i in range(8)]
+
+def _bits_to_bytes(bits: list[int]) -&gt; bytes:
+    return bytes(
+        sum(bits[i + j] &lt;&lt; (7 - j) for j in range(8))
+        for i in range(0, len(bits), 8)
+    )
+
+class StemNode:
+    def __init__(self, stem: bytes):
+        assert len(stem) == 31, &quot;stem must be 31 bytes&quot;
+        self.stem = stem
+        self.values: list[Optional[bytes]] = [None] * 256
+
+    def set_value(self, index: int, value: bytes):
+        self.values[index] = value
+
+class InternalNode:
+    def __init__(self):
+        self.left = None
+        self.right = None
+
+class BinaryTree:
+    def __init__(self):
+        self.root = None
+
+    def insert(self, key: bytes, value: bytes):
+        assert len(key) == 32, &quot;key must be 32 bytes&quot;
+        assert len(value) == 32, &quot;value must be 32 bytes&quot;
+        stem = key[:31]
+        subindex = key[31]
+
+        if self.root is None:
+            self.root = StemNode(stem)
+            self.root.set_value(subindex, value)
+            return
+
+        self.root = self._insert(self.root, stem, subindex, value, 0)
+
+    def _insert(self, node, stem, subindex, value, depth):
+        assert depth &lt; 248, &quot;depth must be less than 248&quot;
+
+        if node is None:
+            node = StemNode(stem)
+            node.set_value(subindex, value)
+            return node
+
+        stem_bits = _bytes_to_bits(stem)
+        if isinstance(node, StemNode):
+            if node.stem == stem:
+                node.set_value(subindex, value)
+                return node
+            existing_stem_bits = _bytes_to_bits(node.stem)
+            return self._split_leaf(
+                node, stem_bits, existing_stem_bits, subindex, value, depth
+            )
+
+        bit = stem_bits[depth]
+        if bit == 0:
+            node.left = self._insert(node.left, stem, subindex, value, depth + 1)
+        else:
+            node.right = self._insert(node.right, stem, subindex, value, depth + 1)
+        return node
+
+    def _split_leaf(self, leaf, stem_bits, existing_stem_bits, subindex, value, depth):
+        if stem_bits[depth] == existing_stem_bits[depth]:
+            new_internal = InternalNode()
+            bit = stem_bits[depth]
+            if bit == 0:
+                new_internal.left = self._split_leaf(
+                    leaf, stem_bits, existing_stem_bits, subindex, value, depth + 1
+                )
+            else:
+                new_internal.right = self._split_leaf(
+                    leaf, stem_bits, existing_stem_bits, subindex, value, depth + 1
+                )
+            return new_internal
+        else:
+            new_internal = InternalNode()
+            bit = stem_bits[depth]
+            stem = _bits_to_bytes(stem_bits)
+            if bit == 0:
+                new_internal.left = StemNode(stem)
+                new_internal.left.set_value(subindex, value)
+                new_internal.right = leaf
+            else:
+                new_internal.right = StemNode(stem)
+                new_internal.right.set_value(subindex, value)
+                new_internal.left = leaf
+            return new_internal
+</code></pre>
+<h3 id="node-merkelization">Node merkelization</h3>
+<p>Define <code>hash(value)</code> as:</p>
+<ul>
+<li><code>hash([0x00] * 64) = [0x00] * 32</code></li>
+<li><code>hash(value) = H(value)</code>, where <code>H</code> is the selected hash function.</li>
+</ul>
+<p>The <code>value</code> length is 32 or 64. Merkelize each node type as:</p>
+<ul>
+<li><code>internal_node_hash = hash(left_hash || right_hash)</code></li>
+<li><code>stem_node_hash = hash(stem || 0x00 || hash(left_hash || right_hash))</code></li>
+<li><code>leaf_node_hash = hash(value)</code></li>
+<li><code>empty_node_hash = [0x00] * 32</code></li>
+</ul>
+<pre><code class="language-python">def _hash(self, data):
+    if data in (None, b&quot;\x00&quot; * 64):
+        return b&quot;\x00&quot; * 32
+    assert len(data) == 64 or len(data) == 32, &quot;data must be 32 or 64 bytes&quot;
+    return blake3(data).digest()
+
+def merkelize(self):
+    def _merkelize(node):
+        if node is None:
+            return b&quot;\x00&quot; * 32
+        if isinstance(node, InternalNode):
+            left_hash = _merkelize(node.left)
+            right_hash = _merkelize(node.right)
+            return self._hash(left_hash + right_hash)
+
+        level = [self._hash(x) for x in node.values]
+        while len(level) &gt; 1:
+            new_level = []
+            for i in range(0, len(level), 2):
+                new_level.append(self._hash(level[i] + level[i + 1]))
+            level = new_level
+        return self._hash(node.stem + b&quot;\0&quot; + level[0])
+
+    return _merkelize(self.root)
+</code></pre>
+<h3 id="zones">Zones</h3>
+<p>The high 4 bits of every stem are the zone identifier <code>Z</code>. The most significant
+bit separates storage from everything else.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Zone <code>Z</code></th>
+<th>Category</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0x0</code></td>
+<td>Account headers</td>
+</tr>
+<tr>
+<td><code>0x1</code></td>
+<td>Code chunks (content-addressed overflow)</td>
+</tr>
+<tr>
+<td><code>0x2</code>–<code>0x7</code></td>
+<td>Reserved for future categories (e.g. nullifiers)</td>
+</tr>
+<tr>
+<td><code>0x8</code>–<code>0xF</code></td>
+<td>Storage</td>
+</tr>
+</tbody>
+</table></div>
+<p>New categories MUST be allocated from <code>0x2</code>–<code>0x7</code>. The storage range MUST NOT be subdivided for other categories, since that would remove address entropy from
+storage keys.</p>
+<p>The zones place deterministic boundaries at fixed depths:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Depth</th>
+<th>Boundary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>d=1</td>
+<td>Storage (right) vs. non-storage (left)</td>
+</tr>
+<tr>
+<td>d=4</td>
+<td>Account zone vs. code zone vs. other low zones</td>
+</tr>
+<tr>
+<td>d=61</td>
+<td>Storage per-account bucket (high bit + 60-bit address prefix)</td>
+</tr>
+<tr>
+<td>d=248</td>
+<td>Stem level in every zone</td>
+</tr>
+<tr>
+<td>d=256</td>
+<td>Leaf level</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="tree-embedding">Tree embedding</h3>
+<p>All state is embedded into the single key/value space. Data accessed together is
+co-located in one stem to reduce branch openings. The account header stem holds an
+account's basic data, code hash, first 64 storage slots, and first 128 code chunks.
+Storage slots and code chunks beyond those live in their own zones, grouped 256 to
+a stem.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BASIC_DATA_LEAF_KEY</td>
+<td>0</td>
+</tr>
+<tr>
+<td>CODE_HASH_LEAF_KEY</td>
+<td>1</td>
+</tr>
+<tr>
+<td>HEADER_STORAGE_OFFSET</td>
+<td>64</td>
+</tr>
+<tr>
+<td>CODE_OFFSET</td>
+<td>128</td>
+</tr>
+<tr>
+<td>STEM_SUBTREE_WIDTH</td>
+<td>256</td>
+</tr>
+<tr>
+<td>ZONE_BITS</td>
+<td>4</td>
+</tr>
+<tr>
+<td>ACCOUNT_ZONE</td>
+<td>0</td>
+</tr>
+<tr>
+<td>CODE_ZONE</td>
+<td>1</td>
+</tr>
+</tbody>
+</table></div>
+<p>It is a required invariant that <code>STEM_SUBTREE_WIDTH &gt; CODE_OFFSET &gt;
+HEADER_STORAGE_OFFSET</code> and that <code>HEADER_STORAGE_OFFSET</code> is greater than the leaf keys.</p>
+<p>Addresses are passed as <code>Address32</code>. Convert a legacy address by prepending 12 zero
+bytes:</p>
+<pre><code class="language-python">def address20_to_address32(address: Address) -&gt; Address32:
+    return b'\x00' * 12 + address
+</code></pre>
+<p>Stems in a non-storage zone are a 4-bit zone prefix followed by 244 bits of hash:</p>
+<pre><code class="language-python">def key_hash(inp: bytes) -&gt; bytes32:
+    return blake3(inp).digest() 
+
+def zone_stem(zone: int, digest: bytes) -&gt; bytes:
+    # 4-bit zone || 244-bit hash = 248-bit (31-byte) stem
+    zone_bits = [(zone &gt;&gt; (ZONE_BITS - 1 - i)) &amp; 1 for i in range(ZONE_BITS)]
+    return _bits_to_bytes(zone_bits + _bytes_to_bits(digest)[:248 - ZONE_BITS])
+</code></pre>
+<h3 id="header-values">Header values</h3>
+<p>The account header stem is in <code>ACCOUNT_ZONE</code> and is keyed by the address alone, so
+each account has exactly one header stem.</p>
+<pre><code class="language-python">def get_tree_key_for_header(address: Address32, sub_index: int) -&gt; bytes:
+    stem = zone_stem(ACCOUNT_ZONE, key_hash(address))
+    return stem + bytes([sub_index])
+
+def get_tree_key_for_basic_data(address: Address32):
+    return get_tree_key_for_header(address, BASIC_DATA_LEAF_KEY)
+
+def get_tree_key_for_code_hash(address: Address32):
+    return get_tree_key_for_header(address, CODE_HASH_LEAF_KEY)
+</code></pre>
+<p><code>version</code>, <code>balance</code>, <code>nonce</code>, and <code>code_size</code> are packed big-endian in the value
+at <code>BASIC_DATA_LEAF_KEY</code>:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Offset</th>
+<th>Size</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>version</code></td>
+<td>0</td>
+<td>1</td>
+</tr>
+<tr>
+<td><code>code_size</code></td>
+<td>4</td>
+<td>4</td>
+</tr>
+<tr>
+<td><code>nonce</code></td>
+<td>8</td>
+<td>8</td>
+</tr>
+<tr>
+<td><code>balance</code></td>
+<td>16</td>
+<td>16</td>
+</tr>
+</tbody>
+</table></div>
+<p>Bytes 1 through 3 are reserved. The 4-byte <code>code_size</code> holds values up to <code>2^32 - 1</code>
+bytes, far beyond any foreseeable contract size limit. Packing these fields into one
+leaf needs one branch opening instead of three or four, which lowers gas and
+simplifies witness generation. Setting any header field also sets <code>version</code> to zero.
+<code>code_hash</code> and <code>code_size</code> are set on contract or EOA creation.</p>
+<h3 id="code">Code</h3>
+<p>Code chunks 0 through 127 live in the account header stem at sub-indices
+<code>CODE_OFFSET</code>..<code>255</code>. Chunks at index 128 and above live in <code>CODE_ZONE</code>,
+content-addressed by <code>code_hash</code> so contracts with identical bytecode share leaves.</p>
+<pre><code class="language-python">def get_tree_key_for_code_chunk(address: Address32, code_hash: bytes32, chunk_id: int):
+    if chunk_id &lt; STEM_SUBTREE_WIDTH - CODE_OFFSET:        # chunk_id &lt; 128
+        return get_tree_key_for_header(address, CODE_OFFSET + chunk_id)
+    overflow = chunk_id - (STEM_SUBTREE_WIDTH - CODE_OFFSET)
+    tree_index = overflow // STEM_SUBTREE_WIDTH
+    sub_index  = overflow %  STEM_SUBTREE_WIDTH
+    stem = zone_stem(CODE_ZONE, key_hash(code_hash + tree_index.to_bytes(32, &quot;big&quot;)))
+    return stem + bytes([sub_index])
+</code></pre>
+<p>Chunk <code>i</code> stores a 32-byte value where bytes 1..31 are the i'th 31-byte slice of the
+code and byte 0 is the number of leading bytes that are PUSHDATA. For example, if
+code is <code>...PUSH4 99 98 | 97 96 PUSH1 128 MSTORE...</code> where <code>|</code> begins a new chunk, the latter chunk begins <code>2 97 96 PUSH1 128 MSTORE</code>, recording that its first 2 bytes are PUSHDATA.</p>
+<pre><code class="language-python">PUSH_OFFSET = 95
+PUSH1 = PUSH_OFFSET + 1
+PUSH32 = PUSH_OFFSET + 32
+
+def chunkify_code(code: bytes) -&gt; Sequence[bytes32]:
+    if len(code) % 31 != 0:
+        code += b'\x00' * (31 - (len(code) % 31))
+    bytes_to_exec_data = [0] * (len(code) + 32)
+    pos = 0
+    while pos &lt; len(code):
+        if PUSH1 &lt;= code[pos] &lt;= PUSH32:
+            pushdata_bytes = code[pos] - PUSH_OFFSET
+        else:
+            pushdata_bytes = 0
+        pos += 1
+        for x in range(pushdata_bytes):
+            bytes_to_exec_data[pos + x] = pushdata_bytes - x
+        pos += pushdata_bytes
+    return [
+        bytes([min(bytes_to_exec_data[pos], 31)]) + code[pos: pos+31]
+        for pos in range(0, len(code), 31)
+    ]
+</code></pre>
+<h3 id="storage">Storage</h3>
+<p>Storage slots 0 through 63 live in the account header stem at sub-indices
+<code>HEADER_STORAGE_OFFSET</code>..<code>127</code>. Slots 64 and above live in the storage zone.</p>
+<p>A storage stem is 248 bits: the high bit is <code>1</code> (the storage zone), the next 60
+bits are an address prefix, and the last 187 bits are a suffix bound to both the
+address and the <code>tree_index</code>. The address prefix groups one account's storage under
+a common bucket at depth 61. The suffix hashes the address with <code>tree_index</code>, so two
+accounts that share a prefix still produce independent stems.</p>
+<pre><code class="language-python">STORAGE_ADDR_PREFIX_BITS = 60
+STORAGE_SUFFIX_BITS      = 187
+
+def storage_stem(address: Address32, tree_index: int) -&gt; bytes:
+    prefix = key_hash(address)
+    suffix = key_hash(address + tree_index.to_bytes(32, &quot;big&quot;))
+    bits = [1]                                              # storage zone high bit
+    bits += _bytes_to_bits(prefix)[:STORAGE_ADDR_PREFIX_BITS]
+    bits += _bytes_to_bits(suffix)[:STORAGE_SUFFIX_BITS]    # 1 + 60 + 187 = 248
+    return _bits_to_bytes(bits)
+
+def get_tree_key_for_storage_slot(address: Address32, storage_key: int):
+    if storage_key &lt; CODE_OFFSET - HEADER_STORAGE_OFFSET:   # storage_key &lt; 64
+        return get_tree_key_for_header(address, HEADER_STORAGE_OFFSET + storage_key)
+    tree_index = storage_key // STEM_SUBTREE_WIDTH
+    sub_index  = storage_key %  STEM_SUBTREE_WIDTH
+    return storage_stem(address, tree_index) + bytes([sub_index])
+</code></pre>
+<p>Slots within one <code>STEM_SUBTREE_WIDTH</code> range share a stem, except for slots 0..63,
+which are in the header. Adjacent slots, common in mappings and arrays, group
+together.</p>
+<h3 id="fork">Fork</h3>
+<p>Described in <a href="https://eips.ethereum.org/EIPS/eip-7612">EIP-7612</a>.</p>
+<h3 id="access-events">Access events</h3>
+<p>Partitioned Binary Tree (PBT) adopts <a href="https://eips.ethereum.org/EIPS/eip-4762">EIP-4762</a>'s access-event framework with two required modifications:</p>
+<ol>
+<li>
+<p>Content-addressed code. <a href="https://eips.ethereum.org/EIPS/eip-4762">EIP-4762</a> keys code-chunk access events per account at <code>(CODE_OFFSET + i) // STEM_SUBTREE_WIDTH</code>. PBT moves chunks ≥ 128 to a leaf shared by all contracts with the same <code>code_hash</code>. Access events for overflow code MUST be keyed by the <code>(zone, stem, sub-index)</code> tree-key, not by <code>(address, chunk)</code>, so that a shared chunk is charged once per block regardless of which contract triggers the access and so the witness contains one copy. Header chunks (0–127) remain per-account.</p>
+</li>
+<li>
+<p>Branch-cost calibration. <code>WITNESS_BRANCH_COST (1900)</code> is calibrated in <a href="https://eips.ethereum.org/EIPS/eip-4762">EIP-4762</a> to ≈13.2 gas/byte assuming a ~144-byte average branch for the EIP-7864 depth profile. PBT's branches are deeper, so we need to adjust the values.</p>
+</li>
+</ol>
+<h2 id="rationale">Rationale</h2>
+<p>This EIP defines a binary tree that starts empty. Only new state changes are stored
+in it. The MPT continues to exist but is frozen, setting up a later hard fork that
+migrates MPT data into the binary tree (<a href="https://eips.ethereum.org/EIPS/eip-7748">EIP-7748</a>).</p>
+<h3 id="single-tree-with-zones">Single tree with zones</h3>
+<p>A single key/value tree is simpler to work with than a tree of tries: database
+access, caching, syncing, and proof code all operate on one abstraction, and
+witness gas rules are clearer. State spreads uniformly, so one contract's millions
+of slots are not concentrated in one place, which helps state sync and blunts
+unbalanced-tree-filling attacks.</p>
+<p>Zones add structure without giving up that uniformity. Each zone is a self-contained
+subtree at a known depth, so a node can sync, prove, or expire one category without
+touching the rest. Because no leaf stores a <code>storage_root</code>, an account's nonce in
+the account zone and one of its slots in the storage zone are independent writes.
+The root recomputes in one bottom-up pass and the two branches meet near the root.
+This admits parallelism across zones, across accounts within a zone, and across
+stems within an account.</p>
+<h3 id="storage-layout">Storage layout</h3>
+<p>Storage takes the upper half of the tree because it is the largest category and the
+most frequently proven, so it should branch earliest and shallowest. The 60-bit
+address prefix gives each account its own storage bucket at depth 61, which is the
+unit later expiry and partial-statefulness schemes can prune or sync. The 187-bit
+suffix is bound to the address and <code>tree_index</code> so a prefix collision cannot
+correlate two accounts' storage layouts.</p>
+<h3 id="content-addressed-code">Content-addressed code</h3>
+<p>Keying overflow code by <code>code_hash</code> rather than by account lets all contracts with
+identical bytecode share leaves. Most deployed contracts repeat a small number of
+templates, so this removes a large amount of duplicate code from the state. The
+first 128 chunks stay in the account header, keyed per account, so they expire with
+the account and need no reference counting. Only chunks beyond ~4 KB are shared.</p>
+<h3 id="snark-friendliness-and-post-quantum-security">SNARK friendliness and post-quantum security</h3>
+<p>The design avoids complex branching: no extension nodes mid-branch, no RLP. This
+keeps circuit implementations simple and lowers proving overhead. The dominant
+factor is the merkelization hash, which should be efficient in and out of circuit.
+The choice is open, with candidates:</p>
+<ol>
+<li><strong>BLAKE3</strong>: good native performance, reasonable in-circuit, well-studied,
+   currently used in the reference implementation.</li>
+<li><strong>Keccak</strong>: already in Ethereum, well-studied, less efficient to prove.</li>
+<li><strong>Poseidon2</strong>: strong in-circuit performance, security analysis ongoing through
+   the Ethereum Foundation (EF) cryptography initiative, needs extra specification for field encoding.</li>
+</ol>
+<p>Because the tree depends only on a hash function and not on elliptic curves, it
+stays secure under the post-quantum assumptions that NIST's 2030 guidance and
+Verkle's curve-based stack do not. Progress in proving systems suggests pre-state
+and post-state proofs can be generated fast enough, which was Verkle's main
+advantage.</p>
+<h3 id="arity-2">Arity-2</h3>
+<p>Binary tries minimize witness size. In an <code>N</code>-element tree with <code>k</code> children per
+node, the average branch is roughly <code>32 * (k-1) * log(N) / log(k)</code> bytes, minimized
+at <code>k = 2</code>. For <code>N = 2**24</code>:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th><code>k</code></th>
+<th>Branch length (chunks)</th>
+<th>Branch length (bytes)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2</td>
+<td>24</td>
+<td>768</td>
+</tr>
+<tr>
+<td>4</td>
+<td>36</td>
+<td>1152</td>
+</tr>
+<tr>
+<td>8</td>
+<td>56</td>
+<td>1792</td>
+</tr>
+<tr>
+<td>16</td>
+<td>90</td>
+<td>2880</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="tree-depth">Tree depth</h3>
+<p>The tree design attempts to be as simple as possible considering both out-of-circuit and circuit implementations, while satisfying our throughput constraints on proving hashes.</p>
+<p>The proposed design avoids a full 248-bit depth as it would happen in a Sparse Merkle Tree (SMT). This approach helps reduce the hashing load in proving systems, which is currently a throughput bottleneck on commodity hardware.</p>
+<p>Moreover, we could push this further trying to introduce extension nodes in the middle of paths as done in an MPT, but this also adds complexity that might not be worth it considering the tree should be quite balanced.</p>
+<h3 id="state-expiry">State expiry</h3>
+<p>Per-account and per-bucket expiry is a natural operation on the zone topology. The
+storage bucket at depth 61 roots one account's storage in the common case. Record
+its hash and prune below it. The account header stem expires the account's core
+data, hot storage, and initial code in one step. Content-addressed code needs
+reference counting or deferral to a state sweep, since its leaves may be shared.
+Resurrection re-attaches a subtree consistent with the recorded commitment. The
+mechanism itself is left to a separate EIP.</p>
+<h2 id="backwards-compatibility">Backwards Compatibility</h2>
+<p>The main breaking changes are:</p>
+<ol>
+<li>Gas costs for code chunk access can affect application economics. This can be
+   mitigated by raising the gas limit alongside this EIP.</li>
+<li>The tree structure change makes in-EVM proofs of historical state stop working.</li>
+</ol>
+<p>The change is invisible to the EVM. Contracts address storage by 256-bit slot
+numbers through <code>SLOAD</code> and <code>SSTORE</code> and never see tree keys. Key derivation runs
+inside the client, below the EVM, exactly as the MPT already hashes slot keys and
+addresses. No contract, Solidity, or Yul code changes.</p>
+<h2 id="test-cases">Test Cases</h2>
+<p>The hash function is not fixed, so digests cannot be pinned. The deterministic parts
+of the derivation are given as vectors. <code>H(...)[:n]</code> is the high <code>n</code> bits.</p>
+<p>Account header, <code>BASIC_DATA</code> of address <code>A</code>:</p>
+<pre><code>stem    = 0x0 || H(A)[:244]      (4-bit zone || 244-bit hash)
+sub_idx = 0x00
+widths  = 4 + 244 + 8 = 256
+</code></pre>
+<p>Storage slot <code>storage_key = 5</code> of address <code>A</code> (in the header, since 5 &lt; 64):</p>
+<pre><code>sub_idx = HEADER_STORAGE_OFFSET + 5 = 69 (0x45)
+key     = 0x0 || H(A)[:244] || 0x45
+</code></pre>
+<p>Storage slot <code>storage_key = 1000</code> (in the storage zone, since 1000 &gt;= 64):</p>
+<pre><code>tree_index = 1000 // 256 = 3
+sub_idx    = 1000 %  256 = 232 (0xE8)
+stem       = 1 || H(A)[:60] || H(A || 3)[:187]      (high bit = 1)
+widths     = 1 + 60 + 187 + 8 = 256
+</code></pre>
+<p>Code chunk <code>chunk_id = 5</code> (in the header, since 5 &lt; 128):</p>
+<pre><code>sub_idx = CODE_OFFSET + 5 = 133 (0x85)
+key     = 0x0 || H(A)[:244] || 0x85
+</code></pre>
+<p>Code chunk <code>chunk_id = 300</code> of bytecode with hash <code>C</code> (overflow, since 300 &gt;= 128):</p>
+<pre><code>overflow   = 300 - 128 = 172
+tree_index = 172 // 256 = 0
+sub_idx    = 172 %  256 = 172 (0xAC)
+stem       = 0x1 || H(C || 0)[:244]
+widths     = 4 + 244 + 8 = 256
+</code></pre>
+<h2 id="security-considerations">Security Considerations</h2>
+<p>A collision means two distinct items derive the same stem.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Bits</th>
+<th>Birthday bound</th>
+<th>Assessment</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Account stem (<code>0x0</code>)</td>
+<td>244</td>
+<td>2^122</td>
+<td>Far beyond reach</td>
+</tr>
+<tr>
+<td>Code stem (<code>0x1</code>)</td>
+<td>244</td>
+<td>2^122</td>
+<td>Far beyond reach</td>
+</tr>
+<tr>
+<td>Storage address prefix</td>
+<td>60</td>
+<td>~43 colliding pairs at 10^10 accounts</td>
+<td>Benign, see below</td>
+</tr>
+<tr>
+<td>Storage stem suffix</td>
+<td>187</td>
+<td>2^93.5</td>
+<td>Future-proof</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Storage prefix collisions are not consensus-fatal.</strong> At 10 billion accounts, about
+43 address pairs share a 60-bit prefix and so share a bucket. Their leaves interleave
+below depth 61 but stay distinct, because the suffix hashes the address with
+<code>tree_index</code>. An attacker who finds a prefix collision cannot overwrite
+the other account's storage. The only effect is reduced parallelism at that bucket.</p>
+<p><strong>Content-addressed code.</strong> Two contracts with identical bytecode share code-zone
+leaves by design, which is deduplication, not a collision. Two distinct bytecodes
+mapping to the same stem would need a 244-bit collision on <code>H(code_hash ||
+tree_index)</code>, which is infeasible.</p>
+<p><strong>Sub-index.</strong> The sub-index is <code>storage_key % 256</code> or the analogous code arithmetic,
+a direct mapping rather than a hash. Two distinct keys share a sub-index only if they
+also share a <code>tree_index</code>, in which case they are the same item, so no collision is
+possible between distinct items.</p>
+<p>The hash function selection is the dominant security parameter and remains open. The
+collision bounds above assume a hash with uniform 256-bit output truncated to the
+stated widths.</p>
+<h2 id="copyright">Copyright</h2>
+<p>Copyright and related rights waived via <a href="../LICENSE.md">CC0</a>.</p>
+</main>
+</body>
+</html>
